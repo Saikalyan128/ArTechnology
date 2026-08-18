@@ -6,7 +6,6 @@
   <meta name="theme-color" content="#0f1115" />
   <title>WebAR Platform</title>
   <link rel="stylesheet" href="./css/style.css" />
-  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <script src="./js/logger.js?v=4"></script>
   <!-- Original CDN stack (worked on Android before vendor/import-map experiments) -->
   <script async src="https://unpkg.com/es-module-shims@1.10.0/dist/es-module-shims.js"></script>
@@ -27,20 +26,6 @@
       <span id="secure-badge" class="badge">checking...</span>
     </header>
     <main class="main">
-      <section class="card">
-        <h2>1. Scan QR code</h2>
-        <p>
-          Scan a scene QR (or use demo). This site opens the camera and uses
-          <strong>MindAR image tracking</strong> + Three.js. When the target
-          image is detected, AR content appears on that image in the live camera.
-        </p>
-        <div id="qr-reader"></div>
-        <div class="manual-row">
-          <input id="marker-input" type="text" placeholder="markerId (e.g. demo)" autocomplete="off" />
-          <button id="open-btn" class="btn" type="button">Start WebAR</button>
-        </div>
-        <p id="scan-status" class="status-line">Scanner idle.</p>
-      </section>
       <section class="card">
         <h2>Experiences</h2>
         <p>Each experience uses a different printed marker image.</p>
@@ -98,7 +83,7 @@
   <div id="view-ar" class="hidden">
     <div id="ar-root"></div>
     <div class="ar-overlay">
-      <button id="back-btn" class="chip" type="button">Scan again</button>
+      <button id="back-btn" class="chip" type="button">Back</button>
       <span id="marker-chip" class="chip">marker: -</span>
       <span id="xr-chip" class="chip">tracker: ...</span>
     </div>
