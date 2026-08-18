@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Compile MindAR target</title>
+</head>
+<body>
+  <pre id="log">loading...</pre>
+  <script type="module">
+    import { Compiler } from 'https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js';
+
+    const logEl = document.getElementById('log');
+    const log = (m) => { logEl.textContent += '\n' + m; console.log(m); };
+
+    // Query: ?img=./assets/targets/boccia.png
+    const params = new URLSearchParams(location.search);
+    const imgUrl = params.get('img') || './assets/targets/boccia.png';
+
+    async function loadImage(url) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      await new Promise((res, rej) => {
+        img.onload = res;
+        img.onerror = () => rej(new Error('image load failed ' + url));
+        img.src = url;
+      });
+      return img;
+    }
+
+    try {
+      log('image ' + imgUrl);
+      const img = await loadImage(imgUrl);
+      log('size ' + img.width + 'x' + img.height);
+      const compiler = new Compiler();
+      await compiler.compileImageTargets([img], (p) => log('progress ' + Math.round(p * 100) + '%'));
+      const buffer = await compiler.exportData();
+      // Expose for automation
+      window.__MIND_BUFFER__ = buffer;
+      window.__MIND_DONE__ = true;
+      log('done bytes=' + buffer.byteLength);
+    } catch (e) {
+      window.__MIND_ERROR__ = String(e && e.message ? e.message : e);
+      window.__MIND_DONE__ = true;
+      log('error ' + window.__MIND_ERROR__);
+    }
+  </script>
+</body>
+</html>

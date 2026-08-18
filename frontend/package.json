@@ -1,0 +1,10 @@
+{
+  "name": "webar-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WebAR MVP — QR scanner + Three.js WebXR client",
+  "scripts": {
+    "start": "npx --yes serve -l 3000",
+    "dev": "npx --yes serve -l 3000"
+  }
+}

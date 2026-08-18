@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f1115" />
+  <title>WebAR Platform</title>
+  <link rel="stylesheet" href="./css/style.css" />
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="./js/logger.js?v=4"></script>
+  <!-- Original CDN stack (worked on Android before vendor/import-map experiments) -->
+  <script async src="https://unpkg.com/es-module-shims@1.10.0/dist/es-module-shims.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.1/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.1/examples/jsm/",
+      "mindar-image-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="view-scan">
+    <header class="app-header">
+      <h1>WebAR Platform</h1>
+      <span id="secure-badge" class="badge">checking...</span>
+    </header>
+    <main class="main">
+      <section class="card">
+        <h2>1. Scan QR code</h2>
+        <p>
+          Scan a scene QR (or use demo). This site opens the camera and uses
+          <strong>MindAR image tracking</strong> + Three.js. When the target
+          image is detected, AR content appears on that image in the live camera.
+        </p>
+        <div id="qr-reader"></div>
+        <div class="manual-row">
+          <input id="marker-input" type="text" placeholder="markerId (e.g. demo)" autocomplete="off" />
+          <button id="open-btn" class="btn" type="button">Start WebAR</button>
+        </div>
+        <p id="scan-status" class="status-line">Scanner idle.</p>
+      </section>
+      <section class="card">
+        <h2>Experiences</h2>
+        <p>Each experience uses a different printed marker image.</p>
+        <div class="manual-row" style="flex-wrap:wrap">
+          <button id="demo-btn" class="btn secondary" type="button"
+            onclick="if(window.enterWebAR){window.enterWebAR('demo');}else{var e=document.getElementById('boot-error');if(e){e.style.display='block';e.textContent='App not loaded yet';}}">
+            Cube
+          </button>
+          <button id="gallery-btn" class="btn secondary" type="button"
+            onclick="if(window.enterWebAR){window.enterWebAR('gallery');}else{var e=document.getElementById('boot-error');if(e){e.style.display='block';e.textContent='App not loaded yet';}}">
+            Gallery
+          </button>
+          <button id="watch-btn" class="btn" type="button"
+            onclick="if(window.enterWebAR){window.enterWebAR('watch');}else{var e=document.getElementById('boot-error');if(e){e.style.display='block';e.textContent='App not loaded yet';}}">
+            3D Watch (Seiko)
+          </button>
+          <button id="boccia-btn" class="btn" type="button"
+            onclick="if(window.enterWebAR){window.enterWebAR('boccia');}else{var e=document.getElementById('boot-error');if(e){e.style.display='block';e.textContent='App not loaded yet';}}">
+            Boccia Watch
+          </button>
+          <button id="boccia-logo-btn" class="btn" type="button"
+            onclick="if(window.enterWebAR){window.enterWebAR('boccia-logo');}else{var e=document.getElementById('boot-error');if(e){e.style.display='block';e.textContent='App not loaded yet';}}">
+            Boccia (SHWAA logo)
+          </button>
+          <button id="motion-btn" class="btn secondary" type="button"
+            onclick="if(window.enterWebAR){window.enterWebAR('motion');}else{var e=document.getElementById('boot-error');if(e){e.style.display='block';e.textContent='App not loaded yet';}}">
+            3D Motion (video)
+          </button>
+        </div>
+        <p class="status-line" style="opacity:.85;margin-top:.5rem">
+          Boccia marker = <code>boccia.png</code> · Logo marker = <code>shwaa-logo.png</code> (same watch GLB).
+          Seiko still uses the original watch marker.
+        </p>
+        <p id="boot-error" class="status-line" style="color:#ef5350;display:none"></p>
+        <p class="status-line" style="margin-top:12px"><strong>Card marker</strong> — cube drag</p>
+        <img class="target-thumb" src="./assets/targets/card.png" alt="Card marker" />
+        <p class="status-line" style="margin-top:12px"><strong>Gallery marker</strong> — swipe photos</p>
+        <img class="target-thumb" src="./assets/targets/gallery.png" alt="Gallery marker" />
+        <p class="status-line" style="margin-top:12px">
+          <strong>Watch marker</strong> — print/show THIS image, then Seiko GLB appears (drag to rotate)
+        </p>
+        <img class="target-thumb" src="./assets/targets/watch.png" alt="Watch marker — must match .mind" />
+        <p class="status-line" style="margin-top:12px">
+          <strong>Boccia marker</strong> — print <code>boccia.png</code>
+        </p>
+        <img class="target-thumb" src="./assets/targets/boccia.png" alt="Boccia AR marker" />
+        <p class="status-line" style="margin-top:12px">
+          <strong>SHWAA logo marker</strong> — print/show THIS for Boccia watch on the logo
+        </p>
+        <img class="target-thumb" src="./assets/targets/shwaa-logo.png" alt="SHWAA logo AR marker" />
+      </section>
+    </main>
+  </div>
+
+  <div id="view-ar" class="hidden">
+    <div id="ar-root"></div>
+    <div class="ar-overlay">
+      <button id="back-btn" class="chip" type="button">Scan again</button>
+      <span id="marker-chip" class="chip">marker: -</span>
+      <span id="xr-chip" class="chip">tracker: ...</span>
+    </div>
+    <!-- Outside overlay so nothing can block taps (fixed + high z-index) -->
+    <button id="unpin-btn" class="unpin-fab hidden" type="button" aria-label="Unpin object">
+      Unpin
+    </button>
+    <div id="hint" class="hint">Preparing image tracker...</div>
+  </div>
+
+  <!-- classic script so buttons bind even without ESM support quirks -->
+  <script src="./js/app.js?v=4" defer></script>
+</body>
+</html>

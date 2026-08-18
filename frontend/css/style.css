@@ -1,0 +1,301 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg: #0f1115;
+  --surface: #1a1d24;
+  --border: #2a2f3a;
+  --text: #e8eaed;
+  --muted: #9aa0a6;
+  --accent: #4fc3f7;
+  --success: #66bb6a;
+  --error: #ef5350;
+  --radius: 12px;
+}
+
+html,
+body {
+  height: 100%;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.hidden {
+  display: none !important;
+}
+
+body.ar-mode {
+  overflow: hidden;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header h1 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.badge {
+  font-size: 0.7rem;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--muted);
+}
+
+.badge.ok {
+  background: rgba(102, 187, 106, 0.2);
+  color: var(--success);
+}
+
+.badge.fail {
+  background: rgba(239, 83, 80, 0.2);
+  color: var(--error);
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.card h2 {
+  font-size: 0.95rem;
+  margin-bottom: 8px;
+}
+
+.card p {
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  margin-bottom: 12px;
+}
+
+#qr-reader {
+  width: 100%;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+#qr-reader video {
+  border-radius: 8px;
+}
+
+.manual-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.manual-row input {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.btn {
+  appearance: none;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--accent);
+  color: #041018;
+}
+
+.btn.secondary {
+  background: var(--border);
+  color: var(--text);
+}
+
+.status-line {
+  margin-top: 10px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.status-line strong {
+  color: var(--accent);
+}
+
+.target-thumb {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  margin-top: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #000;
+}
+
+#view-ar {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+  z-index: 1;
+  background: #000;
+  overflow: hidden;
+}
+
+/* MindAR owns video + canvas layout inside this container */
+#ar-root {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+  background: transparent;
+}
+
+#ar-root:active {
+  cursor: grabbing;
+}
+
+/* Camera feed underneath */
+#ar-root video {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  z-index: 0 !important;
+  pointer-events: none !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  background: transparent !important;
+}
+
+/* 3D canvas on top of video (transparent clear color) */
+#ar-root canvas {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  z-index: 1 !important;
+  pointer-events: none !important;
+  background: transparent !important;
+}
+
+/* MindAR helper wrappers should not paint over the camera */
+#ar-root > div {
+  background: transparent !important;
+}
+
+.ar-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  pointer-events: none;
+}
+
+button.chip,
+.ar-overlay .chip {
+  font: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  font-size: 0.75rem;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(15, 17, 21, 0.75);
+  border: 1px solid var(--border);
+  color: var(--text);
+  backdrop-filter: blur(6px);
+}
+
+/* Floating Unpin — highest layer, large hit target, never under canvas */
+.unpin-fab,
+#unpin-btn {
+  appearance: none;
+  position: fixed;
+  right: 16px;
+  bottom: 88px;
+  z-index: 1000;
+  pointer-events: auto !important;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  min-height: 48px;
+  min-width: 96px;
+  padding: 12px 20px;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: rgba(239, 83, 80, 0.95);
+  color: #fff;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+}
+
+#unpin-btn:active {
+  transform: scale(0.96);
+}
+
+.hint {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 5;
+  max-width: 90%;
+  text-align: center;
+  font-size: 0.85rem;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(15, 17, 21, 0.8);
+  border: 1px solid var(--border);
+  color: var(--text);
+  pointer-events: none;
+}
