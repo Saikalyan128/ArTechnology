@@ -240,13 +240,13 @@ async function buildModelContent(opts) {
   group.userData.mode = 'model';
   group.userData.scrollAnim = scrollAnim;
 
-  // Thin base so raycast / grounding is easier on phone (marker mode only)
+  // Tiny faint ground disk under the model
   const base = new THREE.Mesh(
-    new THREE.CircleGeometry(0.45, 32),
+    new THREE.CircleGeometry(0.06, 32),
     new THREE.MeshBasicMaterial({
       color: 0x222222,
       transparent: true,
-      opacity: 0.2,
+      opacity: 0.06,
       side: THREE.DoubleSide,
       depthWrite: false,
     })
@@ -293,7 +293,6 @@ async function buildModelContent(opts) {
   contentRoot.updateMatrixWorld(true);
 
   // 2) Recompute bounds AFTER scale, then place bottom-center on origin
-  //    so watch sits ON the ground disk (not beside it)
   box = meshBounds(contentRoot);
   if (!box || box.isEmpty()) {
     box = new THREE.Box3().setFromObject(contentRoot);
@@ -303,7 +302,7 @@ async function buildModelContent(opts) {
   box.getSize(size);
   box.getCenter(center);
 
-  // XZ: center over disk; Y: bottom of mesh on y=0
+  // XZ: center; Y: bottom of mesh on y=0
   contentRoot.position.set(-center.x, -box.min.y, -center.z);
   contentRoot.updateMatrixWorld(true);
 
@@ -313,10 +312,10 @@ async function buildModelContent(opts) {
   pivot.add(contentRoot);
   group.add(pivot);
 
-  // Ground disk under watch footprint (XZ), not a fixed offset blob
-  const footprint = Math.max(size.x, size.z, 0.2) * 0.55;
+  // Keep ground disk tiny under the model footprint
+  const footprint = Math.max(size.x, size.z, 0.08) * 0.12;
   base.geometry.dispose();
-  base.geometry = new THREE.CircleGeometry(Math.min(Math.max(footprint, 0.12), 0.55), 48);
+  base.geometry = new THREE.CircleGeometry(Math.min(Math.max(footprint, 0.03), 0.07), 32);
   base.position.set(0, 0.001, 0);
 
   // Stronger AR lighting (watches are often dark metal)
