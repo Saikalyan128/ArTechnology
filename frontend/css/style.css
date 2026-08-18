@@ -102,16 +102,6 @@ body.ar-mode {
   margin-bottom: 12px;
 }
 
-#qr-reader {
-  width: 100%;
-  overflow: hidden;
-  border-radius: 8px;
-}
-
-#qr-reader video {
-  border-radius: 8px;
-}
-
 .manual-row {
   display: flex;
   gap: 8px;
