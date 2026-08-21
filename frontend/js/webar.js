@@ -1627,15 +1627,16 @@ export async function startWebAR(markerId) {
     uiLoading: 'no',
     uiScanning: 'no',
     uiError: 'no',
-    filterMinCF: 0.001,
-    filterBeta: 0.01,
-    warmupTolerance: 5,
-    missTolerance: 10,
+    // Stronger one-euro style filtering → calmer pose while marker is tracked
+    filterMinCF: 0.0001,
+    filterBeta: 0.001,
+    warmupTolerance: 8,
+    missTolerance: 15,
   });
   log.ok('MindAR', 'Created (smoothed tracking)', {
     mind: target.mindUrl,
-    filterMinCF: 0.001,
-    filterBeta: 0.01,
+    filterMinCF: 0.0001,
+    filterBeta: 0.001,
   });
 
   const renderer = mindarThree.renderer;
@@ -1689,8 +1690,9 @@ export async function startWebAR(markerId) {
   const targetPos = new THREE.Vector3();
   const targetQuat = new THREE.Quaternion();
   const targetScale = new THREE.Vector3();
-  // 0.08–0.2: lower = calmer image, higher = snappier follow
-  const POSE_SMOOTH = (target.type === 'gallery' || target.type === 'video') ? 0.12 : 0.18;
+  // Extra soft-follow on top of MindAR filter (lower = calmer, more lag).
+  // Models get heavier damping — marker tracking noise shows more on 3D.
+  const POSE_SMOOTH_HZ = (target.type === 'gallery' || target.type === 'video') ? 6 : 4;
 
   function isPinned() {
     return !!content.userData.pinned;
@@ -1847,7 +1849,7 @@ export async function startWebAR(markerId) {
   renderer.setAnimationLoop(function () {
     const dt = clock.getDelta();
 
-    // Marker follow only when NOT pinned (pin freezes last pose)
+    // Marker follow only when NOT pinned (pin freezes last pose → rock-solid)
     if (tracking && content.visible && !isPinned()) {
       anchor.group.updateWorldMatrix(true, false);
       anchor.group.matrixWorld.decompose(targetPos, targetQuat, targetScale);
@@ -1857,9 +1859,11 @@ export async function startWebAR(markerId) {
         smoothScale.copy(targetScale);
         poseSnapped = true;
       } else {
-        smoothPos.lerp(targetPos, POSE_SMOOTH);
-        smoothQuat.slerp(targetQuat, POSE_SMOOTH);
-        smoothScale.lerp(targetScale, POSE_SMOOTH);
+        // Frame-rate independent damping: alpha = 1 - exp(-hz * dt)
+        const alpha = 1 - Math.exp(-POSE_SMOOTH_HZ * Math.min(Math.max(dt, 0), 0.05));
+        smoothPos.lerp(targetPos, alpha);
+        smoothQuat.slerp(targetQuat, alpha);
+        smoothScale.lerp(targetScale, alpha);
       }
       content.position.copy(smoothPos);
       content.quaternion.copy(smoothQuat);
