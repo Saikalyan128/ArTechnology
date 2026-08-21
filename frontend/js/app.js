@@ -175,6 +175,7 @@
   log.ok('UI', 'Buttons ready (cube + gallery + seiko + boccia + logo + motion + unpin)');
 
   checkSecureContext();
-  var bootId = new URLSearchParams(location.search).get('markerId');
-  if (bootId) enterWebAR(bootId);
+  // Temporary: skip home UI — open AR immediately for SHWAA logo → Boccia watch
+  var bootId = new URLSearchParams(location.search).get('markerId') || 'boccia-logo';
+  enterWebAR(bootId);
 })();

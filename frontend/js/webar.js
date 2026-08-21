@@ -240,13 +240,13 @@ async function buildModelContent(opts) {
   group.userData.mode = 'model';
   group.userData.scrollAnim = scrollAnim;
 
-  // Thin base so raycast / grounding is easier on phone (marker mode only)
+  // Tiny faint ground disk under the model
   const base = new THREE.Mesh(
-    new THREE.CircleGeometry(0.45, 32),
+    new THREE.CircleGeometry(0.06, 32),
     new THREE.MeshBasicMaterial({
       color: 0x222222,
       transparent: true,
-      opacity: 0.2,
+      opacity: 0.06,
       side: THREE.DoubleSide,
       depthWrite: false,
     })
@@ -293,7 +293,6 @@ async function buildModelContent(opts) {
   contentRoot.updateMatrixWorld(true);
 
   // 2) Recompute bounds AFTER scale, then place bottom-center on origin
-  //    so watch sits ON the ground disk (not beside it)
   box = meshBounds(contentRoot);
   if (!box || box.isEmpty()) {
     box = new THREE.Box3().setFromObject(contentRoot);
@@ -303,7 +302,7 @@ async function buildModelContent(opts) {
   box.getSize(size);
   box.getCenter(center);
 
-  // XZ: center over disk; Y: bottom of mesh on y=0
+  // XZ: center; Y: bottom of mesh on y=0
   contentRoot.position.set(-center.x, -box.min.y, -center.z);
   contentRoot.updateMatrixWorld(true);
 
@@ -313,10 +312,10 @@ async function buildModelContent(opts) {
   pivot.add(contentRoot);
   group.add(pivot);
 
-  // Ground disk under watch footprint (XZ), not a fixed offset blob
-  const footprint = Math.max(size.x, size.z, 0.2) * 0.55;
+  // Keep ground disk tiny under the model footprint
+  const footprint = Math.max(size.x, size.z, 0.08) * 0.12;
   base.geometry.dispose();
-  base.geometry = new THREE.CircleGeometry(Math.min(Math.max(footprint, 0.12), 0.55), 48);
+  base.geometry = new THREE.CircleGeometry(Math.min(Math.max(footprint, 0.03), 0.07), 32);
   base.position.set(0, 0.001, 0);
 
   // Stronger AR lighting (watches are often dark metal)
@@ -576,8 +575,8 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
   function onDown(e) {
     if (!content.visible) return;
     if (Date.now() < ignoreGesturesUntil) return;
-    // Don't steal taps on overlay UI (Unpin / back)
-    if (e.target && e.target.closest && e.target.closest('.ar-overlay, #unpin-btn, #back-btn')) return;
+    // Don't steal taps on overlay UI (Website / Contact / Unpin)
+    if (e.target && e.target.closest && e.target.closest('.ar-overlay, #unpin-btn, #website-btn, #contact-btn')) return;
 
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -1337,7 +1336,7 @@ function setupCubeInteraction(root, camera, content, opts) {
   function onDown(e) {
     if (!content.visible) return;
     if (Date.now() < ignoreGesturesUntil) return;
-    if (e.target && e.target.closest && e.target.closest('.ar-overlay, #unpin-btn, #back-btn')) return;
+    if (e.target && e.target.closest && e.target.closest('.ar-overlay, #unpin-btn, #website-btn, #contact-btn')) return;
 
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -1628,15 +1627,16 @@ export async function startWebAR(markerId) {
     uiLoading: 'no',
     uiScanning: 'no',
     uiError: 'no',
-    filterMinCF: 0.001,
-    filterBeta: 0.01,
-    warmupTolerance: 5,
-    missTolerance: 10,
+    // Stronger one-euro style filtering → calmer pose while marker is tracked
+    filterMinCF: 0.0001,
+    filterBeta: 0.001,
+    warmupTolerance: 8,
+    missTolerance: 15,
   });
   log.ok('MindAR', 'Created (smoothed tracking)', {
     mind: target.mindUrl,
-    filterMinCF: 0.001,
-    filterBeta: 0.01,
+    filterMinCF: 0.0001,
+    filterBeta: 0.001,
   });
 
   const renderer = mindarThree.renderer;
@@ -1690,8 +1690,9 @@ export async function startWebAR(markerId) {
   const targetPos = new THREE.Vector3();
   const targetQuat = new THREE.Quaternion();
   const targetScale = new THREE.Vector3();
-  // 0.08–0.2: lower = calmer image, higher = snappier follow
-  const POSE_SMOOTH = (target.type === 'gallery' || target.type === 'video') ? 0.12 : 0.18;
+  // Extra soft-follow on top of MindAR filter (lower = calmer, more lag).
+  // Models get heavier damping — marker tracking noise shows more on 3D.
+  const POSE_SMOOTH_HZ = (target.type === 'gallery' || target.type === 'video') ? 6 : 4;
 
   function isPinned() {
     return !!content.userData.pinned;
@@ -1848,7 +1849,7 @@ export async function startWebAR(markerId) {
   renderer.setAnimationLoop(function () {
     const dt = clock.getDelta();
 
-    // Marker follow only when NOT pinned (pin freezes last pose)
+    // Marker follow only when NOT pinned (pin freezes last pose → rock-solid)
     if (tracking && content.visible && !isPinned()) {
       anchor.group.updateWorldMatrix(true, false);
       anchor.group.matrixWorld.decompose(targetPos, targetQuat, targetScale);
@@ -1858,9 +1859,11 @@ export async function startWebAR(markerId) {
         smoothScale.copy(targetScale);
         poseSnapped = true;
       } else {
-        smoothPos.lerp(targetPos, POSE_SMOOTH);
-        smoothQuat.slerp(targetQuat, POSE_SMOOTH);
-        smoothScale.lerp(targetScale, POSE_SMOOTH);
+        // Frame-rate independent damping: alpha = 1 - exp(-hz * dt)
+        const alpha = 1 - Math.exp(-POSE_SMOOTH_HZ * Math.min(Math.max(dt, 0), 0.05));
+        smoothPos.lerp(targetPos, alpha);
+        smoothQuat.slerp(targetQuat, alpha);
+        smoothScale.lerp(targetScale, alpha);
       }
       content.position.copy(smoothPos);
       content.quaternion.copy(smoothQuat);
