@@ -575,8 +575,8 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
   function onDown(e) {
     if (!content.visible) return;
     if (Date.now() < ignoreGesturesUntil) return;
-    // Don't steal taps on overlay UI (Unpin / back)
-    if (e.target && e.target.closest && e.target.closest('.ar-overlay, #unpin-btn, #back-btn')) return;
+    // Don't steal taps on overlay UI (Website / Contact / Unpin)
+    if (e.target && e.target.closest && e.target.closest('.ar-overlay, #unpin-btn, #website-btn, #contact-btn')) return;
 
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -1336,7 +1336,7 @@ function setupCubeInteraction(root, camera, content, opts) {
   function onDown(e) {
     if (!content.visible) return;
     if (Date.now() < ignoreGesturesUntil) return;
-    if (e.target && e.target.closest && e.target.closest('.ar-overlay, #unpin-btn, #back-btn')) return;
+    if (e.target && e.target.closest && e.target.closest('.ar-overlay, #unpin-btn, #website-btn, #contact-btn')) return;
 
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
