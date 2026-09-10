@@ -27,6 +27,21 @@
   var starting = false;
   var webarApi = null;
 
+  // Loading overlay
+  var arLoading = document.getElementById('ar-loading');
+
+  function showArLoading() {
+    if (!arLoading) return;
+    arLoading.classList.remove('hidden');
+  }
+
+  function hideArLoading() {
+    if (!arLoading) return;
+    // Fade out then fully hide so it doesn't block taps
+    arLoading.classList.add('hidden');
+    setTimeout(function () { arLoading.style.display = 'none'; }, 450);
+  }
+
   // Watch picker elements
   var watchPicker = document.getElementById('watch-picker');
   var watchCards = watchPicker ? watchPicker.querySelectorAll('.watch-card') : [];
@@ -117,8 +132,10 @@
     try {
       showArView();
       hideWatchPicker();
+      showArLoading();
       var api = await loadWebAR();
       await api.startWebAR(id);
+      hideArLoading();
       log.ok('App', 'WebAR running');
       // Show watch selector only for boccia-type experiences
       if (id === 'boccia' || id === 'boccia-logo') {
@@ -139,6 +156,9 @@
 
   async function backToScan() {
     hideWatchPicker();
+    hideArLoading();
+    // Reset loading overlay display so it shows again next time
+    if (arLoading) arLoading.style.display = '';
     try {
       if (webarApi) await webarApi.stopWebAR();
     } catch (e) {

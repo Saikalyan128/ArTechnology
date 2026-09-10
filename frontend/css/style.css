@@ -251,6 +251,67 @@ a.chip,
   opacity: 0.9;
 }
 
+/* ---- AR brand name centred in overlay ---- */
+.ar-brand-name {
+  font-family: 'Didot', 'Playfair Display', 'Bodoni MT', Georgia, serif;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.92);
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.35));
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  align-self: center;
+  white-space: nowrap;
+}
+
+/* ---- AR loading overlay ---- */
+.ar-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0f1115;
+  transition: opacity 0.4s ease;
+}
+
+.ar-loading.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ar-loading-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.ar-loading-spinner {
+  width: 52px;
+  height: 52px;
+  border: 3px solid rgba(255, 255, 255, 0.15);
+  border-top-color: rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  animation: ar-spin 0.9s linear infinite;
+}
+
+@keyframes ar-spin {
+  to { transform: rotate(360deg); }
+}
+
+.ar-loading-text {
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+}
+
 /* Floating Unpin — highest layer, large hit target, never under canvas */
 .unpin-fab,
 #unpin-btn {

@@ -83,9 +83,16 @@
   <div id="view-ar" class="hidden">
     <div id="ar-root"></div>
     <div class="ar-overlay">
-      <!-- Temporary: replace debug chips with public actions -->
       <a id="website-btn" class="chip ar-action" href="https://google.com" target="_blank" rel="noopener noreferrer">Website</a>
+      <span class="ar-brand-name">SHwaasFX</span>
       <a id="contact-btn" class="chip ar-action" href="mailto:shwaasfx@gmail.com">Contact us</a>
+    </div>
+    <!-- Loading overlay — shown while MindAR initialises -->
+    <div id="ar-loading" class="ar-loading">
+      <div class="ar-loading-inner">
+        <div class="ar-loading-spinner"></div>
+        <div class="ar-loading-text">Loading AR experience…</div>
+      </div>
     </div>
     <!-- Outside overlay so nothing can block taps (fixed + high z-index) -->
     <button id="unpin-btn" class="unpin-fab hidden" type="button" aria-label="Unpin object">
