@@ -27,6 +27,49 @@
   var starting = false;
   var webarApi = null;
 
+  // Watch picker elements
+  var watchPicker = document.getElementById('watch-picker');
+  var watchCards = watchPicker ? watchPicker.querySelectorAll('.watch-card') : [];
+
+  /** Show the watch picker and wire tap-to-swap for boccia-style experiences */
+  function showWatchPicker() {
+    if (!watchPicker) return;
+    // Reset to default (Boccia) selection
+    watchCards.forEach(function (card) { card.classList.remove('active'); });
+    if (watchCards.length > 0) watchCards[0].classList.add('active');
+    watchPicker.classList.remove('hidden');
+    if (viewAr) viewAr.classList.add('has-picker');
+  }
+
+  function hideWatchPicker() {
+    if (!watchPicker) return;
+    watchPicker.classList.add('hidden');
+    if (viewAr) viewAr.classList.remove('has-picker');
+  }
+
+  // Bind watch card taps
+  watchCards.forEach(function (card) {
+    card.addEventListener('pointerdown', function (e) {
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
+    }, true);
+    card.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var modelUrl = card.getAttribute('data-model');
+      if (!modelUrl) return;
+      // Update active highlight immediately for responsiveness
+      watchCards.forEach(function (c) { c.classList.remove('active'); });
+      card.classList.add('active');
+      // Swap the model in the running AR session
+      if (webarApi && typeof webarApi.swapModel === 'function') {
+        log.info('UI', 'swapModel', modelUrl);
+        webarApi.swapModel(modelUrl).catch(function (err) {
+          log.error('UI', 'swapModel failed', String(err));
+        });
+      }
+    });
+  });
+
   function showBootError(msg) {
     if (!bootError) return;
     bootError.style.display = 'block';
@@ -73,9 +116,14 @@
 
     try {
       showArView();
+      hideWatchPicker();
       var api = await loadWebAR();
       await api.startWebAR(id);
       log.ok('App', 'WebAR running');
+      // Show watch selector only for boccia-type experiences
+      if (id === 'boccia' || id === 'boccia-logo') {
+        showWatchPicker();
+      }
     } catch (err) {
       console.error(err);
       log.error('App', 'WebAR failed', String(err));
@@ -90,6 +138,7 @@
   window.enterWebAR = enterWebAR;
 
   async function backToScan() {
+    hideWatchPicker();
     try {
       if (webarApi) await webarApi.stopWebAR();
     } catch (e) {

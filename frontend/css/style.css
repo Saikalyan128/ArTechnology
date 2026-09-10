@@ -297,4 +297,86 @@ a.chip,
   border: 1px solid var(--border);
   color: var(--text);
   pointer-events: none;
+  transition: bottom 0.2s ease;
+}
+
+/* Lift hint above watch picker when picker is visible */
+#view-ar.has-picker .hint,
+#view-ar.has-picker #hint {
+  bottom: 116px;
+}
+
+/* Lift unpin button above watch picker */
+#view-ar.has-picker .unpin-fab,
+#view-ar.has-picker #unpin-btn {
+  bottom: 180px;
+}
+
+/* ---- Watch Picker ---- */
+.watch-picker {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
+  background: linear-gradient(to bottom, transparent 0%, rgba(0, 0, 0, 0.72) 30%);
+  pointer-events: auto;
+}
+
+.watch-picker-track {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  padding: 14px 16px 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.watch-picker-track::-webkit-scrollbar {
+  display: none;
+}
+
+.watch-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 72px;
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px solid transparent;
+  border-radius: 14px;
+  color: #fff;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  flex-shrink: 0;
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.watch-card:active {
+  transform: scale(0.94);
+}
+
+.watch-card.active {
+  border-color: var(--accent, #4fc3f7);
+  background: rgba(79, 195, 247, 0.2);
+}
+
+.watch-icon {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.watch-name {
+  text-transform: uppercase;
 }

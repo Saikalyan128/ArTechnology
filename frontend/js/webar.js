@@ -42,6 +42,11 @@ const TARGETS = {
     modelUrl: './assets/3D_motion/boccia_titanium_wrist_watch__animatable.glb',
     fitSize: 1.05,
     scrollAnim: true,
+    preloadModels: [
+      './assets/3D_motion/boccia_titanium_wrist_watch__animatable.glb',
+      './assets/3D_motion/w1.glb',
+      './assets/3D_motion/w2.glb',
+    ],
   },
   // Same Boccia GLB, SHWAA logo marker
   'boccia-logo': {
@@ -51,6 +56,11 @@ const TARGETS = {
     modelUrl: './assets/3D_motion/boccia_titanium_wrist_watch__animatable.glb',
     fitSize: 1.05,
     scrollAnim: true,
+    preloadModels: [
+      './assets/3D_motion/boccia_titanium_wrist_watch__animatable.glb',
+      './assets/3D_motion/w1.glb',
+      './assets/3D_motion/w2.glb',
+    ],
   },
   // Scroll-scrub video with chroma-key transparency (reuses gallery marker for MVP)
   motion: {
@@ -91,6 +101,16 @@ function setUnpinButtonVisible(show) {
 
 // Active-session unpin hook (called from button / app.js)
 let activeUnpinFn = null;
+
+// Active-session model swap hook (called from watch picker / app.js)
+let activeSwapFn = null;
+
+/** Public: swap the loaded 3D model without restarting tracking. */
+export function swapModel(modelUrl) {
+  if (typeof activeSwapFn === 'function') return activeSwapFn(modelUrl);
+  log.warn('UI', 'swapModel called but no active session');
+  return Promise.resolve(false);
+}
 
 /** Public: unpin current AR object if pinned. Used by overlay button. */
 export function requestUnpin() {
@@ -256,8 +276,9 @@ async function buildModelContent(opts) {
   group.add(base);
   group.userData.base = base;
 
+  const silent = !!opts.silent;
   log.info('GLB', 'Loading model...', modelUrl);
-  setHint('Loading 3D model...');
+  if (!silent) setHint('Loading 3D model...');
   const loader = new GLTFLoader();
   const gltf = await new Promise(function (resolve, reject) {
     loader.load(modelUrl, resolve, undefined, reject);
@@ -533,14 +554,15 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
   let lastTapY = 0;
   let tapCandidate = false;
   let ignoreGesturesUntil = 0; // block leftover motion after unpin
-  let userScale = 1;
+  const initialUserScale = (opts.initialUserScale > 0) ? opts.initialUserScale : 1;
+  let userScale = initialUserScale;
   const pointers = new Map();
   let pinching = false;
   let pinchStartDist = 0;
-  let pinchStartScale = 1;
+  let pinchStartScale = initialUserScale;
 
-  if (pivot) pivot.scale.setScalar(1);
-  content.userData.userScale = 1;
+  if (pivot) pivot.scale.setScalar(initialUserScale);
+  content.userData.userScale = initialUserScale;
 
   function clearHold() {
     if (holdTimer) {
@@ -1721,6 +1743,7 @@ export async function startWebAR(markerId) {
   }
   content.visible = false;
   content.userData.pinned = false;
+  content.userData.currentModelUrl = target.modelUrl || null;
   // Soft-follow in scene (not hard-parented to anchor) for extra stability
   scene.add(content);
 
@@ -1825,6 +1848,129 @@ export async function startWebAR(markerId) {
       fitSize: target.fitSize || 0.6,
     });
   }
+
+  // ---- Watch model cache: preload all GLBs so swaps are instant ----
+  // Map<modelUrl, Promise<contentGroup>>
+  const watchCache = new Map();
+
+  function cacheModel(url) {
+    if (watchCache.has(url)) return watchCache.get(url);
+    const p = buildModelContent({
+      modelUrl: url,
+      fitSize: target.fitSize || 1.05,
+      scrollAnim: !!target.scrollAnim,
+      silent: true, // don't overwrite the hint during background load
+    }).then(function (c) {
+      c.visible = false;
+      log.ok('Preload', 'Cached', url);
+      return c;
+    }).catch(function (err) {
+      watchCache.delete(url); // allow retry on next swap
+      log.warn('Preload', 'Failed', url, String(err));
+      return null;
+    });
+    watchCache.set(url, p);
+    return p;
+  }
+
+  // Seed the cache with the already-built main content (resolved immediately)
+  watchCache.set(target.modelUrl, Promise.resolve(content));
+
+  // Preload remaining models in the background — no await, fire-and-forget
+  if (target.preloadModels && target.preloadModels.length) {
+    target.preloadModels.forEach(function (url) { cacheModel(url); });
+  }
+
+  // ---- Model swap: pull from cache, preserve full view state ----
+  async function doSwap(modelUrl) {
+    if (modelUrl === (content.userData.currentModelUrl || target.modelUrl)) {
+      log.info('Swap', 'Already showing', modelUrl);
+      return false;
+    }
+    log.info('Swap', 'Swapping model to', modelUrl);
+
+    // ── Snapshot everything from the outgoing model ──────────────────────────
+    const oldPivot      = content.userData.pivot;
+    const oldUserScale  = oldPivot ? oldPivot.scale.x : 1;
+    const oldPivotQuat  = oldPivot ? oldPivot.quaternion.clone() : null;
+    const wasPinned     = !!content.userData.pinned;
+    const wasVisible    = content.visible;
+    // Freeze the world-space pose so we can copy it after the await
+    const frozenPos   = content.position.clone();
+    const frozenQuat  = content.quaternion.clone();
+    const frozenScale = content.scale.clone();
+
+    // ── Teardown outgoing model ───────────────────────────────────────────────
+    try { disposeInteraction(); } catch (e) {}
+    disposeInteraction = function () {};
+    // Park in cache (keeps geometry alive for instant swap-back)
+    content.visible = false;
+    scene.remove(content);
+    watchCache.set(content.userData.currentModelUrl || target.modelUrl, Promise.resolve(content));
+
+    // ── Retrieve incoming model from cache (or build if cache missed) ─────────
+    var newContent = await (watchCache.has(modelUrl) ? watchCache.get(modelUrl) : cacheModel(modelUrl));
+    if (!newContent) {
+      newContent = await buildModelContent({
+        modelUrl: modelUrl,
+        fitSize: target.fitSize || 1.05,
+        scrollAnim: !!target.scrollAnim,
+      });
+      watchCache.set(modelUrl, Promise.resolve(newContent));
+    }
+
+    newContent.userData.currentModelUrl = modelUrl;
+
+    // ── Restore world-space pose ──────────────────────────────────────────────
+    newContent.position.copy(frozenPos);
+    newContent.quaternion.copy(frozenQuat);
+    newContent.scale.copy(frozenScale);
+    // Preserve visibility exactly — if it was pinned & floating, keep it visible
+    newContent.visible = wasVisible;
+    // Preserve pin state so the render loop keeps the pose frozen
+    newContent.userData.pinned = wasPinned;
+    // Only re-snap to marker if we weren't pinned (pinned = pose already frozen)
+    poseSnapped = wasPinned;
+
+    // Restore pivot rotation (user's drag-rotate angle)
+    if (newContent.userData.pivot && oldPivotQuat) {
+      newContent.userData.pivot.quaternion.copy(oldPivotQuat);
+    }
+
+    // ── Swap into scene ───────────────────────────────────────────────────────
+    content = newContent;
+    scene.add(content);
+
+    // ── Rewire interaction, restoring zoom level ──────────────────────────────
+    if (content.userData.scrollAnim) {
+      disposeInteraction = setupModelScrollAnimInteraction(root, camera, content, {
+        enablePin: true,
+        onPinChange: onPinChange,
+        fitSize: target.fitSize || 1.05,
+        initialUserScale: oldUserScale,
+      });
+    } else {
+      disposeInteraction = setupCubeInteraction(root, camera, content, {
+        enablePin: true,
+        onPinChange: onPinChange,
+        fitSize: target.fitSize || 0.6,
+      });
+    }
+
+    // ── Restore UI to match preserved state ──────────────────────────────────
+    if (wasPinned) {
+      // Keep the Unpin button visible and show the pinned hint
+      applyPinUi(true, 'swap');
+    } else if (tracking) {
+      setHint('Scroll/drag = anim · side-drag = rotate · Long-press = pin');
+    } else {
+      setHint('Point camera at the SHWAA logo marker.');
+    }
+    log.ok('Swap', 'Model ready', modelUrl);
+    return true;
+  }
+
+  activeSwapFn = doSwap;
 
   anchor.onTargetFound = function () {
     tracking = true;
@@ -1939,6 +2085,7 @@ export async function startWebAR(markerId) {
       try {
         disposeInteraction();
         activeUnpinFn = null;
+        activeSwapFn = null;
         if (unpinBtnEl) {
           unpinBtnEl.removeEventListener('pointerdown', onUnpinDom, true);
           unpinBtnEl.removeEventListener('click', onUnpinDom, true);
