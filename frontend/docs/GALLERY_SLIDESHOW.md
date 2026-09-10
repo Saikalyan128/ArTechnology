@@ -40,7 +40,7 @@ buildGalleryContent(images)
   → expose gallery.next() / gallery.prev()
         │
         ▼
-anchor.group.add(content)   // sticks to marker
+scene.add(content)          // soft-follow smoothed anchor pose
 setupGalleryInteraction(...)
         │
         ▼
@@ -67,7 +67,7 @@ gallery: {
 | Field | Role |
 |--------|------|
 | `mindUrl` | Compiled marker for tracking (separate from `card.mind`) |
-| `type` | Branch in `startWebAR`: build gallery vs cube |
+| `type` | Branch in `startWebAR`: gallery vs cube / model / video |
 | `images` | Ordered slideshow URLs (static files today) |
 
 Entry points:
@@ -80,7 +80,7 @@ Entry points:
 
 ## 2. Building the slideshow object (`buildGalleryContent`)
 
-Creates a small Three.js hierarchy parented later to `anchor.group`.
+Creates a small Three.js hierarchy later soft-followed from the marker pose in `scene`.
 
 ### Meshes
 
@@ -149,13 +149,18 @@ opacity/position tween, then commit `index` when the fade finishes.
 ```js
 if (target.type === 'gallery') {
   content = await buildGalleryContent(target.images || []);
+} else if (target.type === 'model') {
+  content = await buildModelContent(...);
+} else if (target.type === 'video') {
+  content = await buildVideoContent(...);
 } else {
   content = buildCubeContent();
 }
 content.visible = false;
+scene.add(content);              // soft-follow (not hard-parented)
 
 const anchor = mindarThree.addAnchor(0);
-anchor.group.add(content);
+// each frame: smooth anchor.group pose -> content transform
 
 if (content.userData.mode === 'gallery') {
   disposeInteraction = setupGalleryInteraction(root, camera, content);
@@ -165,8 +170,9 @@ if (content.userData.mode === 'gallery') {
 - Content is **hidden** until MindAR finds the marker.
 - `onTargetFound` → `content.visible = true` + hint to swipe.
 - `onTargetLost` → hide again (gestures ignore when not visible).
+- Soft-follow damping calms marker jitter (see [INTERACTION.md](./INTERACTION.md)).
 
-So the slideshow **only exists in AR space while the gallery marker is tracked**.
+So the slideshow **only shows while the gallery marker is tracked**.
 
 ---
 

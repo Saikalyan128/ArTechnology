@@ -34,19 +34,18 @@ const TARGETS = {
     // Marker-local units (~1 = full marker width)
     fitSize: 0.9,
   },
-  // Boccia titanium watch — dedicated boccia.mind marker (print boccia.png)
+  // Boccia titanium watch — SHWAA logo marker (logo.mind)
   boccia: {
-    mindUrl: './assets/targets/boccia.mind',
+    mindUrl: './assets/targets/logo.mind',
     type: 'model',
     label: 'boccia marker (titanium GLB)',
     modelUrl: './assets/3D_motion/boccia_titanium_wrist_watch__animatable.glb',
     fitSize: 1.05,
-    // Scroll / drag scrubs GLB animation (same idea as motion video)
     scrollAnim: true,
   },
-  // Same Boccia GLB, but SHWAA logo as the MindAR target
+  // Same Boccia GLB, SHWAA logo marker
   'boccia-logo': {
-    mindUrl: './assets/targets/shwaa-logo.mind',
+    mindUrl: './assets/targets/logo.mind',
     type: 'model',
     label: 'SHWAA logo (Boccia GLB)',
     modelUrl: './assets/3D_motion/boccia_titanium_wrist_watch__animatable.glb',
@@ -493,7 +492,33 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
   const TAP_MOVE_MAX = 48; // mobile finger wiggle
   const DBL_TAP_MS = 700; // generous for phone double-tap
   const ZOOM_MIN = 0.35;
-  const ZOOM_MAX = 3.5;
+  // Reusable objects for dynamic zoom — avoids allocation on every pinch frame
+  const _zoomBox = new THREE.Box3();
+  const _zoomSize = new THREE.Vector3();
+  const _zoomObjPos = new THREE.Vector3();
+  const _zoomCamPos = new THREE.Vector3();
+
+  /**
+   * Maximum zoom = userScale that makes the object fill 90% of screen height.
+   * Uses the actual world-space bounding box so it works regardless of
+   * MindAR's unit system, marker size, or camera distance.
+   */
+  function getZoomMax() {
+    _zoomBox.setFromObject(content);
+    if (_zoomBox.isEmpty()) return 10;
+    _zoomBox.getSize(_zoomSize);
+    _zoomBox.getCenter(_zoomObjPos);
+    camera.getWorldPosition(_zoomCamPos);
+    const dist = Math.max(_zoomCamPos.distanceTo(_zoomObjPos), 0.001);
+    // Visible screen height in world units at the object's depth
+    const screenH = 2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    // Fraction of screen the object currently occupies
+    const objH = Math.max(_zoomSize.x, _zoomSize.y);
+    const fraction = objH / screenH;
+    if (fraction <= 0 || !isFinite(fraction)) return 10;
+    // Scale needed for the object to fill 90% of screen height
+    return Math.min(50, Math.max(userScale + 1, userScale * (0.9 / fraction)));
+  }
 
   let active = false;
   let mode = null; // 'anim' | 'rot'
@@ -555,7 +580,7 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
   }
 
   function applyZoom(scale) {
-    userScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, scale));
+    userScale = Math.max(ZOOM_MIN, Math.min(getZoomMax(), scale));
     content.userData.userScale = userScale;
     if (pivot) pivot.scale.setScalar(userScale);
   }
@@ -1247,7 +1272,25 @@ function setupCubeInteraction(root, camera, content, opts) {
   const LONG_MS = 600;
   const MOVE_CANCEL = 14;
   const ZOOM_MIN = 0.35;
-  const ZOOM_MAX = 3.5;
+  // Reusable objects for dynamic zoom
+  const _zoomBox = new THREE.Box3();
+  const _zoomSize = new THREE.Vector3();
+  const _zoomObjPos = new THREE.Vector3();
+  const _zoomCamPos = new THREE.Vector3();
+
+  function getZoomMax() {
+    _zoomBox.setFromObject(content);
+    if (_zoomBox.isEmpty()) return 10;
+    _zoomBox.getSize(_zoomSize);
+    _zoomBox.getCenter(_zoomObjPos);
+    camera.getWorldPosition(_zoomCamPos);
+    const dist = Math.max(_zoomCamPos.distanceTo(_zoomObjPos), 0.001);
+    const screenH = 2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    const objH = Math.max(_zoomSize.x, _zoomSize.y);
+    const fraction = objH / screenH;
+    if (fraction <= 0 || !isFinite(fraction)) return 10;
+    return Math.min(50, Math.max(userScale + 1, userScale * (0.9 / fraction)));
+  }
 
   const cube = content.userData.cube;
   const pivot = content.userData.pivot;
@@ -1316,7 +1359,7 @@ function setupCubeInteraction(root, camera, content, opts) {
   }
 
   function applyZoom(scale) {
-    userScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, scale));
+    userScale = Math.max(ZOOM_MIN, Math.min(getZoomMax(), scale));
     content.userData.userScale = userScale;
     if (pivot) pivot.scale.setScalar(userScale);
   }
@@ -1773,11 +1816,13 @@ export async function startWebAR(markerId) {
     disposeInteraction = setupModelScrollAnimInteraction(root, camera, content, {
       enablePin: true,
       onPinChange: onPinChange,
+      fitSize: target.fitSize || 0.6,
     });
   } else {
     disposeInteraction = setupCubeInteraction(root, camera, content, {
       enablePin: content.userData.mode === 'model',
       onPinChange: onPinChange,
+      fitSize: target.fitSize || 0.6,
     });
   }
 
