@@ -83,15 +83,39 @@
   <div id="view-ar" class="hidden">
     <div id="ar-root"></div>
     <div class="ar-overlay">
-      <!-- Temporary: replace debug chips with public actions -->
       <a id="website-btn" class="chip ar-action" href="https://google.com" target="_blank" rel="noopener noreferrer">Website</a>
+      <span class="ar-brand-name">SHwaasFX</span>
       <a id="contact-btn" class="chip ar-action" href="mailto:shwaasfx@gmail.com">Contact us</a>
+    </div>
+    <!-- Loading overlay — shown while MindAR initialises -->
+    <div id="ar-loading" class="ar-loading">
+      <div class="ar-loading-inner">
+        <div class="ar-loading-spinner"></div>
+        <div class="ar-loading-text">Loading AR experience…</div>
+      </div>
     </div>
     <!-- Outside overlay so nothing can block taps (fixed + high z-index) -->
     <button id="unpin-btn" class="unpin-fab hidden" type="button" aria-label="Unpin object">
       Unpin
     </button>
     <div id="hint" class="hint">Preparing image tracker...</div>
+    <!-- Watch selector — shown only for boccia/boccia-logo experiences -->
+    <div id="watch-picker" class="watch-picker hidden">
+      <div class="watch-picker-track">
+        <button class="watch-card active" data-model="./assets/3D_motion/boccia_titanium_wrist_watch__animatable.glb" type="button">
+          <span class="watch-icon">⌚</span>
+          <span class="watch-name">Boccia</span>
+        </button>
+        <button class="watch-card" data-model="./assets/3D_motion/w1.glb" type="button">
+          <span class="watch-icon">⌚</span>
+          <span class="watch-name">W1</span>
+        </button>
+        <button class="watch-card" data-model="./assets/3D_motion/w2.glb" type="button">
+          <span class="watch-icon">⌚</span>
+          <span class="watch-name">W2</span>
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- classic script so buttons bind even without ESM support quirks -->

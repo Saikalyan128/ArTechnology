@@ -87,71 +87,60 @@ So the live `<video>` shows underneath the WebGL canvas.
 
 ---
 
-## Building the 3D content (`buildContent`)
+## Building 3D content (by experience type)
 
-All demo meshes live in `buildContent()` in `webar.js`.
+`startWebAR` branches on `target.type`:
 
-### Objects used
+| type | Builder | Main Three.js pieces |
+|------|---------|----------------------|
+| cube | `buildCubeContent()` | Plane + box + pivot + lights |
+| gallery | `buildGalleryContent(images)` | Dual photo planes, frame, hit pad, textures |
+| model | `buildModelContent(...)` | `GLTFLoader` scene, pivot, lights, ground disk, optional AnimationMixer |
+| video | `buildVideoContent(...)` | VideoTexture plane + chroma shader + hit pad |
 
-| Three.js API | Role in this app |
-|--------------|------------------|
-| `THREE.Group` | Content root + rotation pivot |
-| `THREE.PlaneGeometry` + `MeshBasicMaterial` | Semi-transparent card-sized plane (easy to tap) |
-| `THREE.BoxGeometry` + `MeshStandardMaterial` | Orange interactive cube |
-| `THREE.DirectionalLight` | Key light (needed by Standard material) |
-| `THREE.AmbientLight` | Fill light so faces aren’t pure black |
-| `mesh.position` / `group.add` | Layout hierarchy |
-| `group.userData` | Store refs to `cube` and `pivot` for interaction |
-
-### Scene hierarchy
+### Typical model hierarchy
 
 ```
 scene                          (from MindAR)
- └── … MindAR internals …
- └── anchor.group              (MindAR updates world matrix from marker)
-       └── content (Group)     (our buildContent() root)
-             ├── plane         (MeshBasicMaterial – no light required)
-             ├── pivot (Group) (we rotate this on drag)
-             │     └── cube    (MeshStandardMaterial – needs lights)
-             ├── DirectionalLight
-             └── AmbientLight
+ ├── anchor.group              (MindAR marker pose)
+ └── content (Group)           (soft-followed in scene — NOT hard child of anchor)
+       ├── groundBase (small disk)
+       ├── pivot
+       │     └── contentRoot → gltf.scene
+       └── lights
 ```
 
-Important pattern — **pivot at cube center**:
+Cube/gallery/video use the same soft-follow idea.
 
-```js
-pivot.position.copy(cube.position);  // pivot at cube world offset
-cube.position.set(0, 0, 0);          // cube local origin = pivot center
-pivot.add(cube);
-```
+### Pivot pattern
 
-Rotating `pivot` spins the cube around itself, not around the card corner.
+Rotation/zoom targets `content.userData.pivot`. Drag flag lives on `content.userData.cube` (real mesh for cube; proxy for models).
 
-### Materials
+### Materials / loaders
 
-- **Basic** (plane): flat color, ignores lights; good for a simple hit target.
-- **Standard** (cube): PBR-ish; reacts to lights (`metalness`, `roughness`).
-
-Without lights, a Standard cube looks black. That’s why lights are children of
-`content` (they move with the marker).
+- Cube: Basic plane + Standard box
+- Models: GLB via `GLTFLoader`; materials hardened for AR
+- Gallery: Basic materials + `TextureLoader`
+- Video: chroma ShaderMaterial on `VideoTexture`
 
 ---
 
-## Anchoring content to the marker
+## Soft-follow anchoring (current)
 
 ```js
-const anchor = mindarThree.addAnchor(0);  // index 0 = first image in .mind
-const content = buildContent();
+const anchor = mindarThree.addAnchor(0);
+scene.add(content);           // not anchor.group.add(content)
 content.visible = false;
-anchor.group.add(content);
 
-anchor.onTargetFound = () => { content.visible = true; };
-anchor.onTargetLost  = () => { content.visible = false; };
+// each frame while tracking && !pinned:
+anchor.group.matrixWorld.decompose(targetPos, targetQuat, targetScale);
+// frame-rate independent lerp/slerp with POSE_SMOOTH_HZ
+content.position/quaternion/scale = smoothed values
 ```
 
-Three.js does **not** track the image. MindAR writes the marker pose into
-`anchor.group`. Because `content` is a child, every Three object under it
-automatically sticks to the card.
+MindAR owns marker pose. Three.js owns displayed pose with extra damping. Pin freezes the last pose.
+
+Found/lost toggle visibility (pinned content can stay visible on lost).
 
 ---
 
@@ -159,23 +148,18 @@ automatically sticks to the card.
 
 ```js
 renderer.setAnimationLoop(() => {
-  if (content.visible && !cube.userData.dragging) {
-    pivot.rotation.y += 0.01;   // idle spin (Three.js transform)
-  }
+  const dt = clock.getDelta();
+  // soft-follow when tracking and not pinned
+  // mixer.update(dt) for auto-play models
+  // gallery.update(dt) for crossfade
+  // videoTex.needsUpdate when needed
   renderer.render(scene, camera);
 });
 ```
 
-- Prefer `renderer.setAnimationLoop` (Three.js helper) over raw `requestAnimationFrame`.
-- Each frame: optional animation → `render(scene, camera)`.
-- Idle spin pauses while the user drags (`cube.userData.dragging`).
+No global idle spin. Motion comes from gestures, GLB anim/scrub, or gallery fades.
 
-On stop:
-
-```js
-renderer.setAnimationLoop(null);
-mindarThree.stop();
-```
+On stop: `setAnimationLoop(null)`, dispose interaction, `mindarThree.stop()`.
 
 ---
 
@@ -183,29 +167,20 @@ mindarThree.stop();
 
 | API | Use |
 |-----|-----|
-| `THREE.Raycaster` | Finger → 3D object hit test |
-| `THREE.Vector2` | Normalized device coordinates for the ray |
-| `raycaster.setFromCamera(ndc, camera)` | Build ray from screen point |
-| `raycaster.intersectObject(content, true)` | Hit cube or plane (recursive) |
-| `pivot.rotation.x / .y` | Apply drag deltas |
-
-Screen pixel → NDC:
-
-```js
-ndc.x = ((clientX - left) / width) * 2 - 1;
-ndc.y = -((clientY - top) / height) * 2 + 1;
-```
+| `Raycaster` / `Vector2` | Hit test (`hitTest` helper) |
+| `pivot.rotation` / `pivot.scale` | Drag rotate + pinch zoom |
+| `AnimationMixer` | Model clips (auto-play or scrub) |
+| `VideoTexture` | Motion experience |
 
 Details: [INTERACTION.md](./INTERACTION.md).
 
 ---
 
-## Coordinate system (what you need day to day)
+## Coordinate system
 
 - Three.js: **Y-up**, right-handed.
-- Marker plane lies roughly in the anchor’s local XY (card face).
-- Positive local Z lifts content off the card toward the camera (cube sits slightly “above” the card).
-- Units are arbitrary; MindAR scales the anchor so the target width maps to roughly size `1` in local X (our plane is `1 × 0.55` to match the sample card aspect).
+- Marker face ≈ anchor local XY; models sit bottom-centered slightly above y=0.
+- Marker-local units: target width roughly size `1`; `fitSize` scales GLBs relative to that.
 
 ---
 
@@ -213,24 +188,11 @@ Details: [INTERACTION.md](./INTERACTION.md).
 
 | Not used | Why |
 |----------|-----|
-| WebXR (`renderer.xr`, `ARButton`) | Image markers → MindAR CV instead |
-| `GLTFLoader` | Demo uses a procedural cube (easy to add later) |
-| `OrbitControls` | Camera is owned by MindAR / AR view |
-| Manual `PerspectiveCamera` setup | Provided by `MindARThree` |
+| WebXR / ARButton | Image markers via MindAR CV |
+| OrbitControls | Camera owned by MindAR |
+| Manual main PerspectiveCamera setup | Provided by MindARThree |
 
----
-
-## Extending with more Three.js
-
-| Goal | Approach |
-|------|----------|
-| Replace cube with a model | `GLTFLoader` from `three/addons/loaders/GLTFLoader.js`, add `gltf.scene` under `pivot` |
-| Animations | `THREE.AnimationMixer` + update mixer in the animation loop |
-| Better lighting | `HemisphereLight`, env map, or light baked into GLB |
-| Shadows | `renderer.shadowMap.enabled = true` + light/mesh cast/receive flags |
-| Multiple objects | More children under `content`; raycast still uses `intersectObject(content, true)` |
-
-Keep parenting everything under `anchor.group` (or `content`) so marker tracking continues to drive pose.
+`GLTFLoader` **is** used for watch / Boccia.
 
 ---
 
@@ -238,13 +200,13 @@ Keep parenting everything under `anchor.group` (or `content`) so marker tracking
 
 | File | Three.js role |
 |------|----------------|
-| `frontend/index.html` | Import map for `three` + `three/addons/` |
-| `frontend/js/webar.js` | All Three scene, materials, raycast, render loop |
-| `frontend/js/app.js` | No Three imports; lazy-loads `webar.js` |
-| `frontend/css/style.css` | Layers `<video>` under transparent `<canvas>` |
+| `frontend/index.html` | Import map for three + three/addons/ |
+| `frontend/js/webar.js` | Content, loaders, raycast, soft-follow, render loop |
+| `frontend/js/app.js` | No Three; lazy-loads webar.js |
+| `frontend/css/style.css` | Video under transparent canvas |
 
 ---
 
-## Mental model (one sentence)
+## Mental model
 
-**MindAR finds the card and moves a Three.js group; Three.js owns everything you see and touch in 3D.**
+**MindAR finds the marker and updates an anchor matrix; Three.js soft-follows that pose and owns everything you see and touch in 3D.**

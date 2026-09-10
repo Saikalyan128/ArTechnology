@@ -1,219 +1,121 @@
 # WebAR Interaction Guide
 
-How image-marker AR and cube interaction work in this project.
+How image-marker AR, gestures, pin, and multi-experience content work **as implemented now**.
+
+Entry:
+
+- `frontend/js/app.js` — boot / buttons -> `startWebAR(markerId)`
+- `frontend/js/webar.js` — MindAR + Three.js + interactions
+
+Related: [ASSETS.md](./ASSETS.md) · [THREEJS.md](./THREEJS.md) · [GALLERY_SLIDESHOW.md](./GALLERY_SLIDESHOW.md)
+
+---
 
 ## Stack
 
 | Layer | Library | Job |
 |--------|---------|-----|
-| Camera + marker tracking | **MindAR** (`MindARThree`) | Opens camera, finds `.mind` target, updates pose |
-| 3D scene + interaction | **Three.js** | Cube, lights, raycasting, drag-rotate, render loop |
-
-Entry files:
-
-- `frontend/js/app.js` — UI, QR/demo button → calls `startWebAR()`
-- `frontend/js/webar.js` — MindAR + Three.js scene and interaction
+| Camera + marker | MindAR (MindARThree) | Camera, .mind match, anchor pose |
+| 3D + input | Three.js | Content, raycast, drag/pinch, render |
 
 ---
 
 ## End-to-end flow
 
 ```
-User taps "Start demo WebAR"
-        │
-        ▼
-app.js → import('./webar.js') → startWebAR('demo')
-        │
-        ▼
-Camera permission (getUserMedia preflight)
-        │
-        ▼
-new MindARThree({ container, imageTargetSrc: card.mind })
-        │
-        ▼
-mindarThree.start()  → live <video> + WebGL canvas
-        │
-        ▼
-User points camera at printed / on-screen card image
-        │
-        ▼
-anchor.onTargetFound → content.visible = true
-        │
-        ▼
-User touches cube → drag → pivot rotates
+Boot (home button OR temporary auto boccia-logo)
+  -> app.js imports webar.js -> startWebAR(markerId)
+  -> camera permission + MindARThree({ imageTargetSrc, filters })
+  -> build content by type (cube | gallery | model | video)
+  -> scene.add(content)   // soft-follow, not hard-parented to anchor
+  -> marker FOUND -> content.visible = true
+  -> gestures while visible
 ```
 
 ---
 
-## 1. Marker tracking (MindAR)
+## Marker tracking + soft-follow
 
-```js
-mindarThree = new MindARThree({
-  container: root,                    // #ar-root
-  imageTargetSrc: './assets/targets/card.mind',
-  uiLoading: 'no',
-  uiScanning: 'no',
-  uiError: 'no',
-});
+MindAR updates `anchor.group` each frame. Content lives in `scene` and lerps toward that pose:
 
-const { renderer, scene, camera } = mindarThree;
-const anchor = mindarThree.addAnchor(0);  // target index 0
-```
+- MindAR filter: `filterMinCF: 0.0001`, `filterBeta: 0.001`
+- Soft-follow: `alpha = 1 - exp(-POSE_SMOOTH_HZ * dt)`
+  - models about 4 Hz; gallery/video about 6 Hz
 
-- `card.mind` is a **compiled** target (from MindAR compiler + `card.png`).
-- `addAnchor(0)` creates a Three.js group whose world matrix follows the marker.
-- When the marker is seen: `anchor.onTargetFound`
-- When lost: `anchor.onTargetLost`
+Behavior:
 
-Content is parented to the anchor:
-
-```js
-const content = buildContent();
-content.visible = false;
-anchor.group.add(content);
-```
-
-So when the card moves in the real world, the 3D content stays stuck on it.
+- Unpinned + tracking -> content follows smoothed marker pose
+- Pinned -> last pose frozen; object can stay visible if marker briefly lost
+- Marker FOUND while pinned currently **clears pin** and resumes follow
+- Unpin button / double-tap unpin releases pin
 
 ---
 
-## 2. 3D content (Three.js)
+## Experiences and interaction setup
 
-`buildContent()` creates:
+| type | Builder | Interaction |
+|------|---------|-------------|
+| cube | buildCubeContent | setupCubeInteraction (rotate, pinch/wheel zoom) |
+| gallery | buildGalleryContent | setupGalleryInteraction (swipe/scroll slides) |
+| model | buildModelContent | rotate/zoom + pin; Boccia uses scroll-anim scrub |
+| video | buildVideoContent | setupVideoInteraction (vertical scrub) |
 
-1. **Semi-transparent plane** — same aspect as the card; easier to tap  
-2. **Orange cube** — main interactive object  
-3. **Pivot group** — rotation parent so the cube spins around its center  
-4. **Lights** — directional + ambient  
+### Boccia scroll-anim (`setupModelScrollAnimInteraction`)
 
-Hierarchy:
+- Vertical drag / wheel -> scrub GLB animation
+- Horizontal drag -> rotate pivot
+- Pinch -> zoom
+- Long-press about 600ms -> pin
+- Double-tap while pinned -> unpin
 
-```
-anchor.group          ← MindAR moves this with the marker
-  └── content (Group)
-        ├── plane
-        ├── pivot (Group)     ← we rotate THIS on drag
-        │     └── cube
-        └── lights
-```
+### Cube / Seiko model (`setupCubeInteraction`)
 
-Why a pivot?
-
-- Cube is offset above the card.
-- If we rotate the cube alone, it orbits oddly.
-- Pivot sits at the cube center; cube is at local `(0,0,0)` under the pivot → clean spin.
+- Drag -> rotate pivot
+- Pinch / wheel -> zoom
+- Models: long-press pin; double-tap unpin
 
 ---
 
-## 3. Touch / drag interaction
+## Shared building blocks
 
-Implemented in `setupCubeInteraction()` in `webar.js`.
+### Hit test
 
-### When it works
+`hitTest(root, camera, hitRoot, x, y)`: NDC + Raycaster + recursive intersect.
 
-Only while the marker is found (`content.visible === true`).  
-If the marker is lost, pointer-down is ignored and drag ends.
+Ignores:
 
-### Pointer events
+- content not visible
+- taps on `.ar-overlay`, Unpin, Website, Contact
 
-| Event | Target | Action |
-|--------|--------|--------|
-| `pointerdown` | `#ar-root` | Raycast hit? start drag |
-| `pointermove` | `window` | Apply rotation from delta |
-| `pointerup` / `pointercancel` | `window` | End drag |
+### Pin (models)
 
-`touch-action: none` on `#ar-root` prevents the browser from scrolling while dragging.
-
-Video/canvas use `pointer-events: none` in CSS so touches hit `#ar-root` (our handler), not the media elements.
-
-### Hit testing (raycast)
-
-```js
-// Screen pixel → normalized device coords (-1 … +1)
-pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-pointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-
-raycaster.setFromCamera(pointerNdc, camera);
-const hits = raycaster.intersectObject(content, true);
-```
-
-- Casts a ray from the Three.js camera through the finger position.
-- Hits cube **or** base plane (`true` = recursive).
-- No hit → drag does not start (tap empty camera = ignore).
-
-### Rotation mapping
-
-```js
-pivot.rotation.y += dx * ROTATE_SPEED;  // horizontal drag → yaw
-pivot.rotation.x += dy * ROTATE_SPEED;  // vertical drag → pitch
-pivot.rotation.x = clamp(pivot.rotation.x, -PI/2, +PI/2);
-```
-
-| User gesture | Effect |
-|--------------|--------|
-| Drag right / left | Cube yaws |
-| Drag up / down | Cube tips (clamped so it doesn’t flip) |
-| Release | Idle spin resumes |
-
-`ROTATE_SPEED = 0.012` (radians per pixel). Raise for faster rotation.
-
-### Idle spin vs drag
-
-Render loop:
-
-```js
-if (content.visible && !cube.userData.dragging) {
-  pivot.rotation.y += 0.01;  // slow auto-spin
-}
-renderer.render(scene, camera);
-```
-
-- While dragging: `cube.userData.dragging = true` → idle spin paused.  
-- On release: flag cleared → idle spin continues from the new orientation.
+- `content.userData.pinned = true` stops soft-follow
+- Unpin FAB shown; double-tap or button unpins
+- No world-walk lock in current code — pin freezes **screen/camera-space last pose** until unpinned
 
 ---
 
-## 4. Camera + canvas layers
+## AR UI (current temporary)
 
-MindAR injects into `#ar-root`:
+Top: Website (`https://google.com` placeholder) and Contact (`mailto:shwaasfx@gmail.com`).
 
-1. `<video>` — live camera (underneath)  
-2. `<canvas>` — Three.js WebGL (on top, transparent)
+Bottom: `#hint`. Floating Unpin FAB when pinned.
 
-```js
-renderer.setClearColor(0x000000, 0);  // transparent GL clear
-```
-
-CSS: video `z-index: 0`, canvas `z-index: 1`, both full-screen.  
-You see the real world through the transparent canvas, with the cube drawn on the marker.
+Home Experiences UI still in HTML but often skipped by auto-start.
 
 ---
 
-## 5. Lifecycle
+## Lifecycle
 
 | Step | Function |
 |------|----------|
-| Start | `startWebAR(markerId)` |
-| Stop / back | `stopWebAR()` → `disposeInteraction()`, stop render loop, `mindarThree.stop()` |
-
-Always remove listeners on stop to avoid leaks if the user restarts AR.
-
----
-
-## 6. Extending interaction later
-
-| Idea | Where to change |
-|------|------------------|
-| Tap to play animation | In `onPointerDown` after hit, without requiring drag |
-| Scale with pinch | Extra touch handlers + `pivot.scale` |
-| Load GLB instead of cube | Replace mesh in `buildContent()`; keep pivot + raycast on model root |
-| Multiple markers | `addAnchor(1)`, more entries in `TARGETS` + multi-target `.mind` |
-| Info panel on tap | Raycast hit → show HTML overlay |
+| Start | startWebAR(markerId) |
+| Stop | stopWebAR() dispose listeners, stop loop, mindarThree.stop() |
 
 ---
 
 ## Requirements
 
-- **HTTPS** or `localhost` (camera API)
-- Image target: compile PNG → `.mind` via [MindAR compiler](https://hiukim.github.io/mind-ar-js-doc/tools/compile)
-- Three.js import map must include `three` **and** `three/addons/` (MindAR internal deps)
+- HTTPS or localhost
+- Compiled .mind targets
+- Import map: three, three/addons/, mindar-image-three
