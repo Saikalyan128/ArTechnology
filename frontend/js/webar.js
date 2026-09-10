@@ -1895,6 +1895,10 @@ export async function startWebAR(markerId) {
     const oldPivotQuat  = oldPivot ? oldPivot.quaternion.clone() : null;
     const wasPinned     = !!content.userData.pinned;
     const wasVisible    = content.visible;
+    // Animation position as 0–1 fraction so it maps correctly across models
+    // with different clip durations
+    const oldAnimDur    = content.userData.animDuration || 1;
+    const oldAnimFrac   = (content.userData.animTime || 0) / oldAnimDur;
     // Freeze the world-space pose so we can copy it after the await
     const frozenPos   = content.position.clone();
     const frozenQuat  = content.quaternion.clone();
@@ -1935,6 +1939,11 @@ export async function startWebAR(markerId) {
     // Restore pivot rotation (user's drag-rotate angle)
     if (newContent.userData.pivot && oldPivotQuat) {
       newContent.userData.pivot.quaternion.copy(oldPivotQuat);
+    }
+
+    // Restore animation position (proportional across clip durations)
+    if (typeof newContent.userData.applyAnimTime === 'function' && newContent.userData.animDuration) {
+      newContent.userData.applyAnimTime(oldAnimFrac * newContent.userData.animDuration);
     }
 
     // ── Swap into scene ───────────────────────────────────────────────────────
