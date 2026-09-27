@@ -312,7 +312,11 @@ async function buildModelContent(opts) {
   model.scale.setScalar(s);
   contentRoot.updateMatrixWorld(true);
 
-  // 2) Recompute bounds AFTER scale, then place bottom-center on origin
+  // 2) Recompute bounds AFTER scale.
+  // NOTE: centering is deferred until after the AnimationMixer is initialised
+  // (see below) so that skinned-mesh bone matrices are in their rest pose before
+  // we compute the bounding box. Computing bounds here (before bones are ready)
+  // gives wrong X/Y/Z centers for rigged GLBs (W1, W2), causing X drift on swap.
   box = meshBounds(contentRoot);
   if (!box || box.isEmpty()) {
     box = new THREE.Box3().setFromObject(contentRoot);
@@ -321,10 +325,6 @@ async function buildModelContent(opts) {
   const center = new THREE.Vector3();
   box.getSize(size);
   box.getCenter(center);
-
-  // XZ: center; Y: bottom of mesh on y=0
-  contentRoot.position.set(-center.x, -box.min.y, -center.z);
-  contentRoot.updateMatrixWorld(true);
 
   // Pivot for drag-rotate — tiny lift to avoid z-fight with marker plane
   const pivot = new THREE.Group();
@@ -447,6 +447,26 @@ async function buildModelContent(opts) {
 
     if (scrollAnim) applyAnimTime(0);
 
+    // ── Recompute centering NOW that bones are initialised ──────────────────
+    // For skinned/rigged meshes, bone matrices are only correct after the first
+    // mixer update (called inside applyAnimTime above). Re-measure the bounds
+    // here so center.x/y/z reflect the true rest-pose geometry, not uninitialized
+    // bone positions — this is what was causing W1/W2 to drift in X.
+    {
+      contentRoot.updateMatrixWorld(true);
+      let skinBox = meshBounds(contentRoot);
+      if (!skinBox || skinBox.isEmpty()) {
+        skinBox = new THREE.Box3().setFromObject(contentRoot);
+      }
+      const sc = new THREE.Vector3();
+      skinBox.getCenter(sc);
+      contentRoot.position.set(-sc.x, -sc.y, -skinBox.min.z);
+      contentRoot.updateMatrixWorld(true);
+      log.info('GLB', modelUrl.split('/').pop(),
+        'skin-corrected center', sc.x.toFixed(3), sc.y.toFixed(3), sc.z.toFixed(3),
+        'min.z', skinBox.min.z.toFixed(3));
+    }
+
     group.userData.mixer = mixer;
     group.userData.animActions = actions;
     group.userData.animDuration = maxDur || 1;
@@ -479,6 +499,13 @@ async function buildModelContent(opts) {
     });
   } else if (scrollAnim) {
     log.warn('GLB', 'scrollAnim requested but GLB has no animations');
+    // No mixer — apply centering now using the pre-computed center (no skinning issue)
+    contentRoot.position.set(-center.x, -center.y, -box.min.z);
+    contentRoot.updateMatrixWorld(true);
+  } else {
+    // Static model (no animations) — apply centering using pre-computed bounds
+    contentRoot.position.set(-center.x, -center.y, -box.min.z);
+    contentRoot.updateMatrixWorld(true);
   }
 
   log.ok('GLB', 'Model ready', {
@@ -560,9 +587,23 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
   let pinching = false;
   let pinchStartDist = 0;
   let pinchStartScale = initialUserScale;
+  // Two-finger pan: midpoint of the two touches, tracked frame-to-frame so
+  // the object can be moved by the midpoint's delta while pinch-zoom (based
+  // on the distance between the touches) happens at the same time. Works
+  // whether pinned or not — while pinned this is the only way to reposition
+  // the frozen object on screen.
+  let panMidX = 0;
+  let panMidY = 0;
 
   if (pivot) pivot.scale.setScalar(initialUserScale);
   content.userData.userScale = initialUserScale;
+  if (!content.userData.panOffset) content.userData.panOffset = new THREE.Vector3();
+
+  function applyPan(dxPx, dyPx) {
+    const delta = screenDeltaToWorld(root, camera, content.position, dxPx, dyPx);
+    content.userData.panOffset.add(delta);
+    if (isPinned()) content.position.add(delta);
+  }
 
   function clearHold() {
     if (holdTimer) {
@@ -639,6 +680,8 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
         pinching = true;
         pinchStartDist = pointerDist(pts.a, pts.b) || 1;
         pinchStartScale = userScale;
+        panMidX = (pts.a.x + pts.b.x) / 2;
+        panMidY = (pts.a.y + pts.b.y) / 2;
       }
       if (e.cancelable) e.preventDefault();
       return;
@@ -704,6 +747,11 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
       const pts = getPinchPoints();
       if (pts && pinchStartDist > 0) {
         applyZoom(pinchStartScale * (pointerDist(pts.a, pts.b) / pinchStartDist));
+        const midX = (pts.a.x + pts.b.x) / 2;
+        const midY = (pts.a.y + pts.b.y) / 2;
+        applyPan(midX - panMidX, midY - panMidY);
+        panMidX = midX;
+        panMidY = midY;
       }
       if (e.cancelable) e.preventDefault();
       return;
@@ -784,6 +832,18 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
     if (!scrubAnim) return;
     scrubAnim((-e.deltaY) / 700);
   }
+
+  // Restore the model to how it looked the first time the marker was found:
+  // default zoom, no drag-rotation, animation scrubbed back to the start.
+  // Called when the marker is re-acquired after being lost while unpinned.
+  content.userData.resetToInitial = function () {
+    applyZoom(1);
+    if (pivot) pivot.rotation.set(0, 0, 0);
+    if (content.userData.panOffset) content.userData.panOffset.set(0, 0, 0);
+    if (typeof content.userData.applyAnimTime === 'function') {
+      content.userData.applyAnimTime(0);
+    }
+  };
 
   // capture:true so double-tap works even if MindAR wrappers sit over the root
   const optsEv = { passive: false };
@@ -1278,6 +1338,33 @@ function hitTest(root, camera, obj, x, y) {
   return raycaster.intersectObject(obj, true).length > 0;
 }
 
+// Scratch objects reused by screenDeltaToWorld (avoids per-frame allocation
+// during two-finger pan gestures).
+const _panCamRight = new THREE.Vector3();
+const _panCamUp = new THREE.Vector3();
+const _panCamFwd = new THREE.Vector3();
+const _panCamPos = new THREE.Vector3();
+const _panDelta = new THREE.Vector3();
+
+/**
+ * Convert a screen-pixel drag delta into a world-space translation, so a
+ * two-finger pan moves the object the same way regardless of how far it is
+ * from the camera or which way the camera is currently facing. Returns a
+ * reused scratch Vector3 — callers must copy/add it immediately, not store
+ * the reference.
+ */
+function screenDeltaToWorld(root, camera, atPosition, dxPx, dyPx) {
+  const rect = root.getBoundingClientRect();
+  const h = rect.height || 1;
+  camera.getWorldPosition(_panCamPos);
+  const dist = Math.max(_panCamPos.distanceTo(atPosition), 0.01);
+  const worldPerPx = (2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / h;
+  camera.matrixWorld.extractBasis(_panCamRight, _panCamUp, _panCamFwd);
+  _panDelta.copy(_panCamRight).multiplyScalar(dxPx * worldPerPx);
+  _panDelta.addScaledVector(_panCamUp, -dyPx * worldPerPx); // screen +y is down
+  return _panDelta;
+}
+
 /**
  * Drag-rotate + pinch/wheel zoom + optional long-press pin (3D models).
  *
@@ -1339,9 +1426,21 @@ function setupCubeInteraction(root, camera, content, opts) {
   let pinchStartDist = 0;
   let pinchStartScale = 1;
   let userScale = 1;
+  // Two-finger pan: midpoint of the two touches, tracked frame-to-frame so
+  // we can move the object by the midpoint's delta while pinch-zoom (based
+  // on the distance between the touches) happens at the same time.
+  let panMidX = 0;
+  let panMidY = 0;
 
   if (pivot) pivot.scale.setScalar(1);
   content.userData.userScale = 1;
+  if (!content.userData.panOffset) content.userData.panOffset = new THREE.Vector3();
+
+  function applyPan(dxPx, dyPx) {
+    const delta = screenDeltaToWorld(root, camera, content.position, dxPx, dyPx);
+    content.userData.panOffset.add(delta);
+    if (isPinned()) content.position.add(delta);
+  }
 
   function clearHold() {
     if (holdTimer) {
@@ -1418,6 +1517,8 @@ function setupCubeInteraction(root, camera, content, opts) {
         pinching = true;
         pinchStartDist = pointerDist(pts.a, pts.b) || 1;
         pinchStartScale = userScale;
+        panMidX = (pts.a.x + pts.b.x) / 2;
+        panMidY = (pts.a.y + pts.b.y) / 2;
       }
       if (e.cancelable) e.preventDefault();
       return;
@@ -1481,7 +1582,7 @@ function setupCubeInteraction(root, camera, content, opts) {
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
 
-    // Pinch zoom
+    // Pinch zoom + two-finger pan (midpoint tracking)
     if (enableZoom && pinching && pointers.size >= 2) {
       tapCandidate = false;
       lastTapTs = 0;
@@ -1489,6 +1590,11 @@ function setupCubeInteraction(root, camera, content, opts) {
       if (pts && pinchStartDist > 0) {
         const d = pointerDist(pts.a, pts.b);
         applyZoom(pinchStartScale * (d / pinchStartDist));
+        const midX = (pts.a.x + pts.b.x) / 2;
+        const midY = (pts.a.y + pts.b.y) / 2;
+        applyPan(midX - panMidX, midY - panMidY);
+        panMidX = midX;
+        panMidY = midY;
       }
       if (e.cancelable) e.preventDefault();
       return;
@@ -1570,6 +1676,15 @@ function setupCubeInteraction(root, camera, content, opts) {
   window.addEventListener('pointercancel', onUp, optsCap);
   root.addEventListener('wheel', onWheel, optsEv);
   root.style.touchAction = 'none';
+  // Restore the model to how it looked the first time the marker was found:
+  // default zoom, no drag-rotation. Called when the marker is re-acquired
+  // after being lost while unpinned.
+  content.userData.resetToInitial = function () {
+    applyZoom(1);
+    if (pivot) pivot.rotation.set(0, 0, 0);
+    if (content.userData.panOffset) content.userData.panOffset.set(0, 0, 0);
+  };
+
   log.info('UI', 'Drag/zoom' + (enablePin ? '+pin' : '') + ' ready');
   return function () {
     clearHold();
@@ -1750,15 +1865,42 @@ export async function startWebAR(markerId) {
   const anchor = mindarThree.addAnchor(0);
   let tracking = false;
   let poseSnapped = false;
+  // Set when the marker is lost while NOT pinned. On re-acquisition this
+  // triggers a reset of zoom/rotation/scroll-scrub back to the initial state,
+  // instead of resuming wherever the user left it before walking away.
+  let pendingReset = false;
   const smoothPos = new THREE.Vector3();
   const smoothQuat = new THREE.Quaternion();
   const smoothScale = new THREE.Vector3(1, 1, 1);
   const targetPos = new THREE.Vector3();
   const targetQuat = new THREE.Quaternion();
   const targetScale = new THREE.Vector3();
+  const _camPosSnap = new THREE.Vector3(); // scratch vector for fixed-scale computation
+  // Fraction of screen height the model should fill at its default size.
+  // Constant regardless of physical marker size or camera distance.
+  const TARGET_SCREEN_FRAC = 0.60;
   // Extra soft-follow on top of MindAR filter (lower = calmer, more lag).
   // Models get heavier damping — marker tracking noise shows more on 3D.
-  const POSE_SMOOTH_HZ = (target.type === 'gallery' || target.type === 'video') ? 6 : 4;
+  const POSE_SMOOTH_HZ = (target.type === 'gallery' || target.type === 'video') ? 6 : 2;
+  // Dead-zone: ignore tracker micro-jitter smaller than this world-space distance.
+  // Prevents the object from drifting up/down during idle holds.
+  const POS_DEADZONE = 0.012;
+  // Rotation dead-zone (radians). Angular tracker noise is amplified by the
+  // model's radius, so at high zoom the same sub-degree wobble swings the watch
+  // across a visibly large arc. Both dead-zones are scaled by the user's zoom.
+  // Rotation uses a wake/sleep pair rather than a single threshold: with one
+  // threshold the slerp re-arms as soon as noise nudges past it, so the model
+  // keeps creeping. It now only starts following past ROT_WAKE and re-freezes
+  // once the tracker settles back under ROT_SLEEP.
+  const ROT_WAKE = 0.030;  // ~1.7° — deliberate rotation needed to unfreeze
+  const ROT_SLEEP = 0.012; // ~0.7° — settle below this to re-freeze
+  let rotFollowing = false;
+
+  // Current pinch-zoom factor (1 = default size), maintained by the gesture code.
+  function currentUserScale() {
+    const s = content.userData.userScale;
+    return (typeof s === 'number' && isFinite(s) && s > 0) ? s : 1;
+  }
 
   function isPinned() {
     return !!content.userData.pinned;
@@ -1903,6 +2045,9 @@ export async function startWebAR(markerId) {
     const frozenPos   = content.position.clone();
     const frozenQuat  = content.quaternion.clone();
     const frozenScale = content.scale.clone();
+    // Preserve the user's two-finger pan offset so it isn't reset by the
+    // marker-follow branch overwriting position with smoothPos + panOffset
+    const oldPanOffset = content.userData.panOffset ? content.userData.panOffset.clone() : null;
 
     // ── Teardown outgoing model ───────────────────────────────────────────────
     try { disposeInteraction(); } catch (e) {}
@@ -1924,6 +2069,7 @@ export async function startWebAR(markerId) {
     }
 
     newContent.userData.currentModelUrl = modelUrl;
+    newContent.userData.panOffset = oldPanOffset || new THREE.Vector3();
 
     // ── Restore world-space pose ──────────────────────────────────────────────
     newContent.position.copy(frozenPos);
@@ -1985,6 +2131,15 @@ export async function startWebAR(markerId) {
     tracking = true;
     poseSnapped = false;
     content.visible = true;
+    // Marker was lost (unpinned) and is now reacquired — start over instead of
+    // resuming the zoom/rotation/scroll position left before it walked away.
+    if (pendingReset) {
+      pendingReset = false;
+      if (typeof content.userData.resetToInitial === 'function') {
+        content.userData.resetToInitial();
+        log.info('UI', 'Marker re-acquired — reset to initial state');
+      }
+    }
     if (isPinned()) {
       content.userData.pinned = false;
       setUnpinButtonVisible(false);
@@ -2021,6 +2176,7 @@ export async function startWebAR(markerId) {
     }
 
     content.visible = false;
+    pendingReset = true; // reset zoom/rotation/scrub when the marker comes back
     log.warn('MindAR', 'LOST');
     setHint('Marker lost. Point camera at the target image.');
     setChip('xr-chip', 'tracker: searching...');
@@ -2056,16 +2212,66 @@ export async function startWebAR(markerId) {
       if (!poseSnapped) {
         smoothPos.copy(targetPos);
         smoothQuat.copy(targetQuat);
-        smoothScale.copy(targetScale);
+        // Compute a fixed scale so the model always appears the same size on screen,
+        // irrespective of the physical marker size or camera distance.
+        // Formula: scale = TARGET_SCREEN_FRAC * screenHeight / localModelHeight
+        //   screenHeight (world units) = 2 * dist * tan(fov/2)
+        //   localModelHeight ≈ fitSize (model is normalised to fitSize inside buildModelContent)
+        camera.getWorldPosition(_camPosSnap);
+        const snapDist = Math.max(_camPosSnap.distanceTo(targetPos), 0.01);
+        const screenH  = 2 * snapDist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+        const localH   = target.fitSize || 1.05;
+        const fixedS   = TARGET_SCREEN_FRAC * screenH / localH;
+        smoothScale.setScalar(fixedS);
         poseSnapped = true;
+        rotFollowing = false; // start frozen — unfreeze only on deliberate rotation
       } else {
         // Frame-rate independent damping: alpha = 1 - exp(-hz * dt)
         const alpha = 1 - Math.exp(-POSE_SMOOTH_HZ * Math.min(Math.max(dt, 0), 0.05));
-        smoothPos.lerp(targetPos, alpha);
-        smoothQuat.slerp(targetQuat, alpha);
-        smoothScale.lerp(targetScale, alpha);
+        // Zoom amplifies tracker noise: a fixed world-space wobble covers Nx more
+        // screen pixels when the model is scaled up Nx, and angular noise swings
+        // the model through an arc proportional to its radius. Widen both
+        // dead-zones with the zoom factor so a zoomed-in model stays as steady as
+        // it looks at default size.
+        const zoom = currentUserScale();
+        // Marker pose noise also grows with how far the marker is from the
+        // camera: a farther/smaller marker gives the tracker fewer pixels to
+        // resolve, so its raw position/rotation estimate is noisier — this is
+        // independent of pinch-zoom and shows up right on first scan if the
+        // marker is held farther back ("in the background"). Compare the
+        // camera's current distance to the marker against the comfortable
+        // reference distance implied by TARGET_SCREEN_FRAC (the distance at
+        // which the model would naturally fill that screen fraction), and
+        // widen both dead-zones proportionally once the marker sits farther
+        // than that reference.
+        camera.getWorldPosition(_camPosSnap);
+        const currentDist = Math.max(_camPosSnap.distanceTo(targetPos), 0.01);
+        const localHNow = target.fitSize || 1.05;
+        const nominalDist = localHNow / (TARGET_SCREEN_FRAC * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+        const distFactor = Math.max(1, currentDist / Math.max(nominalDist, 0.01));
+        // Dead-zone: only lerp position if the tracker moved more than the
+        // threshold. Suppresses the small drift from tracker noise during idle
+        // holds without making intentional movement feel sluggish.
+        if (smoothPos.distanceTo(targetPos) > POS_DEADZONE * zoom * distFactor) {
+          smoothPos.lerp(targetPos, alpha);
+        }
+        // Rotation wake/sleep latch: sub-degree angular noise is levered out by
+        // the model radius and reads as a slow spin once zoomed in. Only follow
+        // after a deliberate turn, then re-freeze once the tracker settles.
+        const rotDelta = smoothQuat.angleTo(targetQuat);
+        if (rotFollowing) {
+          if (rotDelta < ROT_SLEEP * zoom * distFactor) rotFollowing = false;
+        } else if (rotDelta > ROT_WAKE * zoom * distFactor) {
+          rotFollowing = true;
+        }
+        if (rotFollowing) {
+          smoothQuat.slerp(targetQuat, alpha);
+        }
+        // Scale is intentionally NOT updated after first snap — keeps a constant
+        // default size regardless of how far away or how small the physical marker is.
       }
       content.position.copy(smoothPos);
+      if (content.userData.panOffset) content.position.add(content.userData.panOffset);
       content.quaternion.copy(smoothQuat);
       content.scale.copy(smoothScale);
     }
