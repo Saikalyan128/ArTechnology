@@ -99,6 +99,49 @@ function setUnpinButtonVisible(show) {
   else btn.classList.add('hidden');
 }
 
+// ---- Pinned-instruction "info dot": on pin, blink a small "i" dot instead of
+// showing the instruction text right away; tapping the dot toggles a small
+// bubble (anchored to the dot itself) with the pinned instructions. ----
+let pinTooltipText = '';
+let pinTooltipVisible = false;
+
+function setPinDotVisible(show) {
+  const dot = document.getElementById('pin-dot');
+  if (dot) {
+    if (show) dot.classList.remove('hidden');
+    else dot.classList.add('hidden');
+  }
+  if (!show) setPinTooltipVisible(false);
+}
+
+function setPinTooltipVisible(show) {
+  const tip = document.getElementById('pin-tooltip');
+  pinTooltipVisible = !!show;
+  if (!tip) return;
+  if (pinTooltipVisible) tip.classList.remove('hidden');
+  else tip.classList.add('hidden');
+}
+
+/** Arm the info dot with the pinned instruction text (bubble starts hidden). */
+function setPinnedHint(text) {
+  pinTooltipText = text;
+  const tip = document.getElementById('pin-tooltip');
+  if (tip) tip.textContent = text;
+  setPinTooltipVisible(false);
+  setPinDotVisible(true);
+}
+
+/** Tapping the dot toggles the instruction bubble open/closed. */
+function togglePinnedHint() {
+  if (!pinTooltipText) return;
+  setPinTooltipVisible(!pinTooltipVisible);
+}
+
+function clearPinnedHint() {
+  pinTooltipText = '';
+  setPinDotVisible(false);
+}
+
 // Active-session unpin hook (called from button / app.js)
 let activeUnpinFn = null;
 
@@ -664,7 +707,7 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
     if (!content.visible) return;
     if (Date.now() < ignoreGesturesUntil) return;
     // Don't steal taps on overlay UI (Website / Contact / Unpin)
-    if (e.target && e.target.closest && e.target.closest('.ar-overlay, #unpin-btn, #website-btn, #contact-btn')) return;
+    if (e.target && e.target.closest && e.target.closest('.ar-overlay, #unpin-btn, #pin-dot, #website-btn, #contact-btn')) return;
 
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -727,7 +770,7 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
         tapCandidate = false;
         lastTapTs = 0;
         setPinned(true);
-        setHint('Pinned. Scroll = anim · side-drag = rotate · Unpin / double-tap to release.');
+        setPinnedHint('Pinned. Scroll = anim · side-drag = rotate · Unpin / double-tap to release.');
       }, LONG_MS);
     }
 
@@ -1500,7 +1543,7 @@ function setupCubeInteraction(root, camera, content, opts) {
   function onDown(e) {
     if (!content.visible) return;
     if (Date.now() < ignoreGesturesUntil) return;
-    if (e.target && e.target.closest && e.target.closest('.ar-overlay, #unpin-btn, #website-btn, #contact-btn')) return;
+    if (e.target && e.target.closest && e.target.closest('.ar-overlay, #unpin-btn, #pin-dot, #website-btn, #contact-btn')) return;
 
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -1567,7 +1610,7 @@ function setupCubeInteraction(root, camera, content, opts) {
         tapCandidate = false;
         lastTapTs = 0;
         setPinned(true);
-        setHint('Pinned. Double-tap screen twice, or tap Unpin.');
+        setPinnedHint('Pinned. Double-tap screen twice, or tap Unpin.');
       }, LONG_MS);
     }
 
@@ -1911,12 +1954,14 @@ export async function startWebAR(markerId) {
     setUnpinButtonVisible(pinned);
     if (pinned) {
       setChip('xr-chip', 'pinned');
-      setHint('Pinned. Scroll = anim · side-drag = rotate · Unpin / double-tap to release.');
+      // Instructions stay hidden behind the dot; tap it to reveal them.
+      setPinnedHint('Pinned. Scroll = anim · side-drag = rotate · Unpin / double-tap to release.');
       log.ok('UI', 'Object PINNED' + (source ? ' via ' + source : ''));
     } else if (tracking) {
       content.visible = true;
       poseSnapped = false; // re-snap to marker next frame
       setChip('xr-chip', 'tracker: FOUND');
+      clearPinnedHint();
       if (content.userData.scrollAnim) {
         setHint('Unpinned. Scroll = anim · side-drag = rotate · Long-press = pin');
       } else if (content.userData.mode === 'model') {
@@ -1928,6 +1973,7 @@ export async function startWebAR(markerId) {
     } else {
       content.visible = false;
       setChip('xr-chip', 'tracker: searching...');
+      clearPinnedHint();
       setHint('Unpinned. Point camera at the marker to place again.');
       log.ok('UI', 'Object UNPINNED' + (source ? ' via ' + source : ''));
     }
@@ -1965,6 +2011,20 @@ export async function startWebAR(markerId) {
   if (unpinBtnEl) {
     unpinBtnEl.addEventListener('pointerdown', onUnpinDom, true);
     unpinBtnEl.addEventListener('click', onUnpinDom, true);
+  }
+
+  // Tap the blinking info dot to toggle the pinned instruction bubble.
+  const pinDotEl = document.getElementById('pin-dot');
+  function onPinDotDom(e) {
+    if (e) {
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
+    }
+    togglePinnedHint();
+  }
+  if (pinDotEl) {
+    pinDotEl.addEventListener('pointerdown', onPinDotDom, true);
+    pinDotEl.addEventListener('click', onPinDotDom, true);
   }
 
   function onPinChange(pinned) {
@@ -2170,7 +2230,7 @@ export async function startWebAR(markerId) {
     if (isPinned()) {
       content.visible = true;
       log.ok('MindAR', 'LOST but PINNED — object retained');
-      setHint('Pinned (no marker). Tap Unpin or double-tap to release.');
+      setPinnedHint('Pinned (no marker). Tap Unpin or double-tap to release. Use two fingers to drag the object.');
       setChip('xr-chip', 'pinned (no marker)');
       return;
     }
@@ -2305,7 +2365,12 @@ export async function startWebAR(markerId) {
           unpinBtnEl.removeEventListener('pointerdown', onUnpinDom, true);
           unpinBtnEl.removeEventListener('click', onUnpinDom, true);
         }
+        if (pinDotEl) {
+          pinDotEl.removeEventListener('pointerdown', onPinDotDom, true);
+          pinDotEl.removeEventListener('click', onPinDotDom, true);
+        }
         setUnpinButtonVisible(false);
+        clearPinnedHint();
         if (content && content.userData && content.userData.video) {
           try {
             content.userData.video.pause();

@@ -116,7 +116,10 @@
   async function loadWebAR() {
     if (webarApi) return webarApi;
     log.info('App', 'Loading webar.js...');
-    webarApi = await import('./webar.js');
+    // Cache-bust the dynamic import so phones always fetch the latest module
+    // instead of a stale cached copy (dynamic import() URLs aren't covered
+    // by the static <script v=...> cache-busting on this page).
+    webarApi = await import('./webar.js?v=' + Date.now());
     log.ok('App', 'webar.js loaded');
     return webarApi;
   }
