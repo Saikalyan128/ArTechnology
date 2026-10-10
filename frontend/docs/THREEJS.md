@@ -1,4 +1,4 @@
-# How Three.js Is Used Here
+  # How Three.js Is Used Here
 
 This project uses **Three.js r160** for all 3D rendering and interaction.
 **MindAR** only tracks the image marker and provides the camera / pose.

@@ -80,11 +80,26 @@
     </main>
   </div>
 
+  <!-- Asset type selection — shown before the AR loading spinner -->
+  <div id="asset-select" class="asset-select">
+    <span class="ar-brand-name asset-brand">ShwaasAR</span>
+    <div class="asset-select-inner">
+      <h2>Choose an experience</h2>
+      <p id="asset-error" class="asset-error" role="alert"></p>
+      <div class="asset-select-grid">
+        <button class="asset-btn" type="button" data-asset="select-image">Image</button>
+        <button class="asset-btn" type="button" data-asset="select-video">Video</button>
+        <button class="asset-btn" type="button" data-asset="select-3d">3-D object</button>
+        <button class="asset-btn" type="button" data-asset="select-furniture">Furniture</button>
+      </div>
+    </div>
+  </div>
+
   <div id="view-ar" class="hidden">
     <div id="ar-root"></div>
     <div class="ar-overlay">
       <a id="website-btn" class="chip ar-action" href="https://google.com" target="_blank" rel="noopener noreferrer">Website</a>
-      <span class="ar-brand-name">SHwaasFX</span>
+      <span class="ar-brand-name">ShwaasAR</span>
       <a id="contact-btn" class="chip ar-action" href="mailto:shwaasfx@gmail.com">Contact us</a>
     </div>
     <!-- Loading overlay — shown while MindAR initialises -->
@@ -121,6 +136,6 @@
   </div>
 
   <!-- classic script so buttons bind even without ESM support quirks -->
-  <script src="./js/app.js?v=5" defer></script>
+  <script src="./js/app.js?v=7" defer></script>
 </body>
 </html>
