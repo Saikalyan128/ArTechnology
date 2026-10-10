@@ -7,6 +7,15 @@ import { MindARThree } from 'mindar-image-three';
 
 const log = window.AppLogger;
 
+// All images in assets/gallery (static site: keep in sync with the folder)
+const GALLERY_IMAGES = [
+  './assets/gallery/01.jpg',
+  './assets/gallery/02.jpg',
+  './assets/gallery/03.jpg',
+  './assets/gallery/04.jpg',
+  './assets/gallery/05.jpg',
+];
+
 const TARGETS = {
   demo: {
     mindUrl: './assets/targets/card.mind',
@@ -62,19 +71,46 @@ const TARGETS = {
       './assets/3D_motion/w2.glb',
     ],
   },
-  // Scroll-scrub video with chroma-key transparency (reuses gallery marker for MVP)
+  // Asset-type selection entries — all use the SHWAA logo target (logo.mind)
+  'select-image': {
+    mindUrl: './assets/targets/logo.mind',
+    type: 'gallery',
+    label: 'SHWAA logo (image slideshow)',
+    images: GALLERY_IMAGES,
+    autoplaySec: 3,
+  },
+  'select-video': {
+    mindUrl: './assets/targets/logo.mind',
+    type: 'video',
+    label: 'SHWAA logo (video)',
+    videoUrl: './assets/gallery/ShwaaSar_video_01.mp4',
+    planeWidth: 1.0,
+    chromaKey: false, // regular footage, not green-screen
+  },
+  'select-3d': {
+    mindUrl: './assets/targets/logo.mind',
+    type: 'model',
+    label: 'SHWAA logo (3-D object)',
+    modelUrl: './assets/3D_motion/boccia_titanium_wrist_watch__animatable.glb',
+    fitSize: 1.05,
+    scrollAnim: true,
+  },
+  // TODO: no furniture GLB in repo yet — placeholder model; swap modelUrl when available
+  'select-furniture': {
+    mindUrl: './assets/targets/logo.mind',
+    type: 'model',
+    label: 'SHWAA logo (furniture)',
+    modelUrl: './assets/3D_motion/w1.glb',
+    fitSize: 1.05,
+  },
+  // Motion experience: chroma-key video, tap to play/pause
   motion: {
     mindUrl: './assets/targets/gallery.mind',
     type: 'video',
-    label: '3D Motion (scroll video)',
-    videoUrl: './assets/3D_motion/VID-20260813-WA0015.mp4',
-    // keyColor: RGB 0–1 for background to punch out (green screen default)
-    keyColor: [0.0, 1.0, 0.0],
-    // Also fade very dark pixels (helps black studio BG)
-    keyDark: 0.12,
-    similarity: 0.32,
-    smoothness: 0.08,
-    planeWidth: 1.3,
+    label: '3D Motion (video)',
+    videoUrl: './assets/gallery/ShwaaSar_video_01.mp4',
+    planeWidth: 1.0,
+    chromaKey: false,
   },
 };
 
@@ -97,6 +133,49 @@ function setUnpinButtonVisible(show) {
   if (!btn) return;
   if (show) btn.classList.remove('hidden');
   else btn.classList.add('hidden');
+}
+
+// ---- Pinned-instruction "info dot": on pin, blink a small "i" dot instead of
+// showing the instruction text right away; tapping the dot toggles a small
+// bubble (anchored to the dot itself) with the pinned instructions. ----
+let pinTooltipText = '';
+let pinTooltipVisible = false;
+
+function setPinDotVisible(show) {
+  const dot = document.getElementById('pin-dot');
+  if (dot) {
+    if (show) dot.classList.remove('hidden');
+    else dot.classList.add('hidden');
+  }
+  if (!show) setPinTooltipVisible(false);
+}
+
+function setPinTooltipVisible(show) {
+  const tip = document.getElementById('pin-tooltip');
+  pinTooltipVisible = !!show;
+  if (!tip) return;
+  if (pinTooltipVisible) tip.classList.remove('hidden');
+  else tip.classList.add('hidden');
+}
+
+/** Arm the info dot with the pinned instruction text (bubble starts hidden). */
+function setPinnedHint(text) {
+  pinTooltipText = text;
+  const tip = document.getElementById('pin-tooltip');
+  if (tip) tip.textContent = text;
+  setPinTooltipVisible(false);
+  setPinDotVisible(true);
+}
+
+/** Tapping the dot toggles the instruction bubble open/closed. */
+function togglePinnedHint() {
+  if (!pinTooltipText) return;
+  setPinTooltipVisible(!pinTooltipVisible);
+}
+
+function clearPinnedHint() {
+  pinTooltipText = '';
+  setPinDotVisible(false);
 }
 
 // Active-session unpin hook (called from button / app.js)
@@ -312,7 +391,11 @@ async function buildModelContent(opts) {
   model.scale.setScalar(s);
   contentRoot.updateMatrixWorld(true);
 
-  // 2) Recompute bounds AFTER scale, then place bottom-center on origin
+  // 2) Recompute bounds AFTER scale.
+  // NOTE: centering is deferred until after the AnimationMixer is initialised
+  // (see below) so that skinned-mesh bone matrices are in their rest pose before
+  // we compute the bounding box. Computing bounds here (before bones are ready)
+  // gives wrong X/Y/Z centers for rigged GLBs (W1, W2), causing X drift on swap.
   box = meshBounds(contentRoot);
   if (!box || box.isEmpty()) {
     box = new THREE.Box3().setFromObject(contentRoot);
@@ -321,10 +404,6 @@ async function buildModelContent(opts) {
   const center = new THREE.Vector3();
   box.getSize(size);
   box.getCenter(center);
-
-  // XZ: center; Y: bottom of mesh on y=0
-  contentRoot.position.set(-center.x, -box.min.y, -center.z);
-  contentRoot.updateMatrixWorld(true);
 
   // Pivot for drag-rotate — tiny lift to avoid z-fight with marker plane
   const pivot = new THREE.Group();
@@ -447,6 +526,26 @@ async function buildModelContent(opts) {
 
     if (scrollAnim) applyAnimTime(0);
 
+    // ── Recompute centering NOW that bones are initialised ──────────────────
+    // For skinned/rigged meshes, bone matrices are only correct after the first
+    // mixer update (called inside applyAnimTime above). Re-measure the bounds
+    // here so center.x/y/z reflect the true rest-pose geometry, not uninitialized
+    // bone positions — this is what was causing W1/W2 to drift in X.
+    {
+      contentRoot.updateMatrixWorld(true);
+      let skinBox = meshBounds(contentRoot);
+      if (!skinBox || skinBox.isEmpty()) {
+        skinBox = new THREE.Box3().setFromObject(contentRoot);
+      }
+      const sc = new THREE.Vector3();
+      skinBox.getCenter(sc);
+      contentRoot.position.set(-sc.x, -sc.y, -skinBox.min.z);
+      contentRoot.updateMatrixWorld(true);
+      log.info('GLB', modelUrl.split('/').pop(),
+        'skin-corrected center', sc.x.toFixed(3), sc.y.toFixed(3), sc.z.toFixed(3),
+        'min.z', skinBox.min.z.toFixed(3));
+    }
+
     group.userData.mixer = mixer;
     group.userData.animActions = actions;
     group.userData.animDuration = maxDur || 1;
@@ -479,6 +578,13 @@ async function buildModelContent(opts) {
     });
   } else if (scrollAnim) {
     log.warn('GLB', 'scrollAnim requested but GLB has no animations');
+    // No mixer — apply centering now using the pre-computed center (no skinning issue)
+    contentRoot.position.set(-center.x, -center.y, -box.min.z);
+    contentRoot.updateMatrixWorld(true);
+  } else {
+    // Static model (no animations) — apply centering using pre-computed bounds
+    contentRoot.position.set(-center.x, -center.y, -box.min.z);
+    contentRoot.updateMatrixWorld(true);
   }
 
   log.ok('GLB', 'Model ready', {
@@ -560,9 +666,23 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
   let pinching = false;
   let pinchStartDist = 0;
   let pinchStartScale = initialUserScale;
+  // Two-finger pan: midpoint of the two touches, tracked frame-to-frame so
+  // the object can be moved by the midpoint's delta while pinch-zoom (based
+  // on the distance between the touches) happens at the same time. Works
+  // whether pinned or not — while pinned this is the only way to reposition
+  // the frozen object on screen.
+  let panMidX = 0;
+  let panMidY = 0;
 
   if (pivot) pivot.scale.setScalar(initialUserScale);
   content.userData.userScale = initialUserScale;
+  if (!content.userData.panOffset) content.userData.panOffset = new THREE.Vector3();
+
+  function applyPan(dxPx, dyPx) {
+    const delta = screenDeltaToWorld(root, camera, content.position, dxPx, dyPx);
+    content.userData.panOffset.add(delta);
+    if (isPinned()) content.position.add(delta);
+  }
 
   function clearHold() {
     if (holdTimer) {
@@ -623,7 +743,7 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
     if (!content.visible) return;
     if (Date.now() < ignoreGesturesUntil) return;
     // Don't steal taps on overlay UI (Website / Contact / Unpin)
-    if (e.target && e.target.closest && e.target.closest('.ar-overlay, #unpin-btn, #website-btn, #contact-btn')) return;
+    if (e.target && e.target.closest && e.target.closest('.ar-overlay, #unpin-btn, #pin-dot, #website-btn, #contact-btn')) return;
 
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -639,6 +759,8 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
         pinching = true;
         pinchStartDist = pointerDist(pts.a, pts.b) || 1;
         pinchStartScale = userScale;
+        panMidX = (pts.a.x + pts.b.x) / 2;
+        panMidY = (pts.a.y + pts.b.y) / 2;
       }
       if (e.cancelable) e.preventDefault();
       return;
@@ -684,7 +806,7 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
         tapCandidate = false;
         lastTapTs = 0;
         setPinned(true);
-        setHint('Pinned. Scroll = anim · side-drag = rotate · Unpin / double-tap to release.');
+        setPinnedHint('Pinned. Scroll = anim · side-drag = rotate · Unpin / double-tap to release.');
       }, LONG_MS);
     }
 
@@ -704,6 +826,11 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
       const pts = getPinchPoints();
       if (pts && pinchStartDist > 0) {
         applyZoom(pinchStartScale * (pointerDist(pts.a, pts.b) / pinchStartDist));
+        const midX = (pts.a.x + pts.b.x) / 2;
+        const midY = (pts.a.y + pts.b.y) / 2;
+        applyPan(midX - panMidX, midY - panMidY);
+        panMidX = midX;
+        panMidY = midY;
       }
       if (e.cancelable) e.preventDefault();
       return;
@@ -785,6 +912,18 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
     scrubAnim((-e.deltaY) / 700);
   }
 
+  // Restore the model to how it looked the first time the marker was found:
+  // default zoom, no drag-rotation, animation scrubbed back to the start.
+  // Called when the marker is re-acquired after being lost while unpinned.
+  content.userData.resetToInitial = function () {
+    applyZoom(1);
+    if (pivot) pivot.rotation.set(0, 0, 0);
+    if (content.userData.panOffset) content.userData.panOffset.set(0, 0, 0);
+    if (typeof content.userData.applyAnimTime === 'function') {
+      content.userData.applyAnimTime(0);
+    }
+  };
+
   // capture:true so double-tap works even if MindAR wrappers sit over the root
   const optsEv = { passive: false };
   const optsCap = { passive: false, capture: true };
@@ -807,20 +946,13 @@ function setupModelScrollAnimInteraction(root, camera, content, opts) {
   };
 }
 
-async function buildGalleryContent(imageUrls) {
+async function buildGalleryContent(imageUrls, opts) {
   const group = new THREE.Group();
   group.userData.mode = 'gallery';
 
   // Smooth crossfade: back plane (outgoing) + front plane (incoming)
   const FADE_SEC = 0.42;
   const SLIDE_X = 0.08; // subtle horizontal drift during fade
-
-  const frame = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.05, 0.8),
-    new THREE.MeshBasicMaterial({ color: 0x111111, side: THREE.DoubleSide })
-  );
-  frame.position.z = -0.01;
-  group.add(frame);
 
   const matA = new THREE.MeshBasicMaterial({
     color: 0xffffff,
@@ -836,8 +968,8 @@ async function buildGalleryContent(imageUrls) {
     opacity: 0,
     depthWrite: false,
   });
-  const photoA = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.7), matA);
-  const photoB = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.7), matB);
+  const photoA = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), matA);
+  const photoB = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), matB);
   photoA.position.z = 0.02;
   photoB.position.z = 0.025;
   group.add(photoA);
@@ -864,13 +996,34 @@ async function buildGalleryContent(imageUrls) {
   let frontIsA = true;
   let anim = null; // { t, from, to, dir, duration }
 
+  // Letterbox each photo inside the frame, preserving its own aspect ratio
+  // (planes are 1x1 and scaled, so no stretching).
+  const MAX_W = 1.0;
+  const MAX_H = 0.75;
+  function fitPhoto(mesh, tex) {
+    const img = tex && tex.image;
+    const ar = img && img.width && img.height ? img.width / img.height : MAX_W / MAX_H;
+    let w = MAX_W;
+    let h = w / ar;
+    if (h > MAX_H) { h = MAX_H; w = h * ar; }
+    mesh.scale.set(w, h, 1);
+  }
+  // No visible frame any more: size against the photo area itself
+  group.userData.bounds = { w: MAX_W, h: MAX_H };
+
   matA.map = textures[0];
   matA.needsUpdate = true;
   matB.map = textures[0];
   matB.needsUpdate = true;
+  fitPhoto(photoA, textures[0]);
+  fitPhoto(photoB, textures[0]);
+
+  // Optional autoplay slideshow
+  const autoplaySec = (opts && opts.autoplaySec) || 0;
+  let idleT = 0;
 
   const label = makeTextSprite('1 / ' + textures.length);
-  label.position.set(0, -0.48, 0.05);
+  label.position.set(0, -0.46, 0.05);
   group.add(label);
 
   function easeInOutCubic(u) {
@@ -907,6 +1060,8 @@ async function buildGalleryContent(imageUrls) {
     // Incoming texture on back plane (starts transparent)
     fb.bMat.map = textures[next];
     fb.bMat.needsUpdate = true;
+    fitPhoto(fb.back, textures[next]);
+    idleT = 0; // manual or auto change restarts the autoplay timer
     fb.bMat.opacity = 0;
     fb.back.position.x = (dir >= 0 ? 1 : -1) * SLIDE_X;
     fb.fMat.opacity = 1;
@@ -927,7 +1082,13 @@ async function buildGalleryContent(imageUrls) {
     prev: function () { show(index - 1, -1); },
     /** Call each frame while gallery is visible */
     update: function (dt) {
-      if (!anim) return;
+      if (!anim) {
+        if (autoplaySec > 0 && textures.length > 1) {
+          idleT += dt;
+          if (idleT >= autoplaySec) show(index + 1, 1);
+        }
+        return;
+      }
       anim.t += dt;
       const u = Math.min(1, anim.t / anim.duration);
       const e = easeInOutCubic(u);
@@ -946,7 +1107,7 @@ async function buildGalleryContent(imageUrls) {
 }
 
 /**
- * Chroma-key video plane. Scroll/drag vertical scrubbing drives currentTime.
+ * Chroma-key video plane with standard playback (muted loop, tap to play/pause).
  * Transparent BG via green-screen + dark-pixel key in a custom shader.
  */
 async function buildVideoContent(opts) {
@@ -956,6 +1117,7 @@ async function buildVideoContent(opts) {
   const similarity = opts.similarity != null ? opts.similarity : 0.32;
   const smoothness = opts.smoothness != null ? opts.smoothness : 0.08;
   const planeWidth = opts.planeWidth != null ? opts.planeWidth : 1.0;
+  const chromaKey = opts.chromaKey !== false;
 
   const group = new THREE.Group();
   group.userData.mode = 'video';
@@ -969,35 +1131,45 @@ async function buildVideoContent(opts) {
   video.setAttribute('playsinline', '');
   video.setAttribute('webkit-playsinline', '');
   video.preload = 'auto';
-  // Keep paused; scrubbing sets currentTime. play() once to decode on iOS.
   video.pause();
 
-  await new Promise(function (resolve, reject) {
+  // A load failure or slow download must NOT abort startWebAR: a rejection here
+  // bubbles to app.js, which bounces the user back to the home screen.
+  // Log it and carry on; the plane just stays blank until data arrives.
+  let loadFailed = false;
+  await new Promise(function (resolve) {
     let done = false;
-    function ok() {
+    function finish() {
       if (done) return;
       done = true;
       resolve();
     }
-    function fail(e) {
-      if (done) return;
-      done = true;
-      reject(e || new Error('Video load failed'));
-    }
-    video.addEventListener('loadeddata', ok);
-    video.addEventListener('error', fail);
+    video.addEventListener('loadeddata', finish);
+    video.addEventListener('error', function () {
+      loadFailed = true;
+      const code = video.error ? video.error.code : '?';
+      log.error('Video', 'Load failed (media error code ' + code + ')', videoUrl);
+      finish();
+    });
     video.load();
-    // Safety timeout — still proceed so marker tracking works
-    setTimeout(ok, 8000);
+    // Large file over a tunnel: don't block tracking start for long
+    setTimeout(finish, 8000);
   });
 
-  // iOS often needs a muted play/pause kick to unlock seeking
-  try {
-    await video.play();
-    video.pause();
-    video.currentTime = 0;
-  } catch (e) {
-    log.warn('Video', 'play unlock failed (ok on some desktop)', String(e));
+  // Muted play/pause kick so iOS decodes the first frame; playback starts on marker found.
+  // Bounded wait: play() can stay pending while a big file buffers.
+  if (!loadFailed) {
+    try {
+      await Promise.race([
+        video.play().then(function () {
+          video.pause();
+          video.currentTime = 0;
+        }),
+        new Promise(function (resolve) { setTimeout(resolve, 2000); }),
+      ]);
+    } catch (e) {
+      log.warn('Video', 'play unlock failed (ok on some desktop)', String(e));
+    }
   }
 
   const vw = video.videoWidth || 16;
@@ -1043,15 +1215,24 @@ async function buildVideoContent(opts) {
       '  float alpha = texColor.a * chromaAlpha * darkAlpha;',
       '  if (alpha < 0.04) discard;',
       '  gl_FragColor = vec4(texColor.rgb, alpha);',
+      // ShaderMaterial skips output colour-space conversion; without this the
+      // (linearised) video looks dark and washed out.
+      '  #include <colorspace_fragment>',
       '}',
     ].join('\n'),
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
   });
+  // Normal footage (no green/black backdrop): the key would punch holes in dark
+  // areas, so render it as a plain opaque video instead.
+  const planeMat = chromaKey
+    ? mat
+    : new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide, toneMapped: false });
+  group.userData.chromaKey = chromaKey;
 
-  const plane = new THREE.Mesh(new THREE.PlaneGeometry(planeWidth, planeH), mat);
-  plane.position.set(0, planeH * 0.5 + 0.02, 0.02);
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(planeWidth, planeH), planeMat);
+  plane.position.set(0, 0, 0.02); // centred on the marker (like gallery)
   group.add(plane);
 
   // Large invisible hit plane (easy to grab even if chroma punches visual holes)
@@ -1070,63 +1251,48 @@ async function buildVideoContent(opts) {
   hit.renderOrder = 10;
   group.add(hit);
 
-  const label = makeTextSprite('Scroll to play');
-  label.position.set(0, -0.08, 0.05);
+  const label = makeTextSprite('Tap to play');
+  label.position.set(0, -planeH * 0.5 - 0.08, 0.05);
   group.add(label);
 
-  // 1:1 scrub — seek on gesture; texture refresh on 'seeked'
-  let playhead = 0;
-  let seekPending = false;
-  let labelDirty = true;
-  let lastSeekWall = 0;
-  let unlocked = false;
-  let scrubCount = 0;
+  // Standard playback: muted loop (muted is required for autoplay on iOS/Android).
+  // userWantsPaused remembers a manual pause so marker re-detection doesn't override it.
+  let userWantsPaused = false;
 
-  function wrapTime(t, dur) {
-    return ((t % dur) + dur) % dur;
+  function refreshLabel() {
+    updateTextSprite(label, video.paused ? 'Tap to play' : 'Tap to pause');
   }
 
-  function getDuration() {
-    const d = video.duration;
-    return d && isFinite(d) && d > 0 ? d : 0;
+  // Audio: starts muted (autoplay policy). The "sound" button (a user gesture)
+  // flips wantAudio; if the browser still refuses unmuted playback we fall back to muted.
+  let wantAudio = false;
+
+  function notifyAudio() {
+    if (typeof group.userData.onAudioChange === 'function') group.userData.onAudioChange(wantAudio);
   }
 
-  function applySeekNow() {
-    seekPending = false;
-    const dur = getDuration();
-    if (!dur) {
-      seekPending = true;
-      return;
-    }
-    playhead = wrapTime(playhead, dur);
-    const now = performance.now();
-    if (now - lastSeekWall < 16) {
-      seekPending = true;
-      return;
-    }
-    lastSeekWall = now;
+  async function playVideo() {
+    video.muted = !wantAudio;
     try {
-      if (Math.abs((video.currentTime || 0) - playhead) > 0.01) {
-        video.currentTime = playhead;
-      }
+      await video.play();
     } catch (e) {
-      seekPending = true;
+      if (!video.muted) {
+        // Unmuted playback refused: retry muted so the video still runs
+        log.warn('Video', 'Unmuted play() blocked — falling back to muted', String(e));
+        wantAudio = false;
+        video.muted = true;
+        notifyAudio();
+        try { await video.play(); } catch (e2) { log.warn('Video', 'play() blocked — tap to start', String(e2)); }
+      } else {
+        // Autoplay blocked: wait for a tap (a user gesture) to start
+        log.warn('Video', 'play() blocked — tap to start', String(e));
+      }
     }
-    tex.needsUpdate = true;
-    if (labelDirty) {
-      labelDirty = false;
-      group.userData.setProgressLabel();
-    }
+    refreshLabel();
   }
 
-  video.addEventListener('seeked', function () {
-    tex.needsUpdate = true;
-  });
-  video.addEventListener('loadedmetadata', function () {
-    playhead = video.currentTime || 0;
-    group.userData.setProgressLabel();
-    log.ok('Video', 'Metadata ready', { duration: video.duration });
-  });
+  video.addEventListener('play', refreshLabel);
+  video.addEventListener('pause', refreshLabel);
 
   group.userData.video = video;
   group.userData.videoTex = tex;
@@ -1134,128 +1300,95 @@ async function buildVideoContent(opts) {
   group.userData.videoPlane = plane;
   group.userData.hitRoot = hit;
   group.userData.label = label;
-  group.userData.unlockVideo = async function () {
-    if (unlocked) return true;
-    try {
-      video.muted = true;
-      await video.play();
+  group.userData.bounds = { w: planeWidth, h: planeH };
+  // Called on marker found: autoplay muted unless the user paused manually
+  group.userData.play = function () {
+    if (userWantsPaused) return;
+    playVideo();
+  };
+  // Sound button (user gesture): toggle audio on/off
+  group.userData.isAudioOn = function () { return wantAudio; };
+  group.userData.toggleAudio = async function () {
+    wantAudio = !wantAudio;
+    video.muted = !wantAudio;
+    notifyAudio();
+    if (video.paused && !userWantsPaused) await playVideo();
+    log.info('Video', wantAudio ? 'Sound on' : 'Sound off');
+  };
+  // Called on marker lost
+  group.userData.pause = function () {
+    video.pause();
+  };
+  // Tap on the video plane
+  group.userData.toggle = function () {
+    if (video.paused) {
+      userWantsPaused = false;
+      playVideo(); // the tap is the user gesture for play()
+    } else {
+      userWantsPaused = true;
       video.pause();
-      unlocked = true;
-      log.ok('Video', 'Unlocked for scrubbing');
-      return true;
-    } catch (e) {
-      log.warn('Video', 'Unlock failed', String(e));
-      return false;
     }
-  };
-  group.userData.scrub = function (deltaNorm) {
-    const dur = getDuration();
-    if (!dur) {
-      log.warn('Video', 'Scrub ignored — duration not ready');
-      return;
-    }
-    playhead = wrapTime(playhead + deltaNorm * Math.max(dur * 0.35, 0.8), dur);
-    labelDirty = true;
-    seekPending = true;
-    scrubCount += 1;
-    if (scrubCount === 1 || scrubCount % 30 === 0) {
-      log.info('Video', 'Scrub', { t: +playhead.toFixed(2), dur: +dur.toFixed(2) });
-    }
-    applySeekNow();
-  };
-  group.userData.setProgressLabel = function () {
-    const dur = getDuration();
-    if (!dur) {
-      updateTextSprite(label, 'Loading…');
-      return;
-    }
-    const pct = Math.round((playhead / dur) * 100);
-    updateTextSprite(label, pct + '% · scroll');
+    log.info('Video', video.paused ? 'Paused' : 'Playing');
   };
   group.userData.update = function () {
-    if (seekPending) applySeekNow();
-    // Keep frame showing even if paused
     if (video.readyState >= 2) tex.needsUpdate = true;
   };
 
   log.ok('Video', 'Motion plane ready', {
     url: videoUrl,
     size: vw + 'x' + vh,
-    duration: getDuration() || 0,
+    duration: video.duration || 0,
   });
   return group;
 }
 
 function setupVideoInteraction(root, camera, content) {
-  const scrub = content.userData.scrub;
   const video = content.userData.video;
-  const unlock = content.userData.unlockVideo;
-  let active = false;
-  let lastY = 0;
-  let lastX = 0;
-  // Smaller = more sensitive scrub
-  const SCRUB_PX = 160;
+  const TAP_MAX_MS = 350;
+  const TAP_MAX_PX = 12;
+  let downX = 0;
+  let downY = 0;
+  let downT = 0;
+  let downHit = false;
+
+  function isHit(e) {
+    return (
+      hitTest(root, camera, content.userData.hitRoot, e.clientX, e.clientY) ||
+      hitTest(root, camera, content, e.clientX, e.clientY)
+    );
+  }
 
   function onDown(e) {
     if (!content.visible) return;
-    // Hit plane OR main content (group)
-    const hitOk =
-      hitTest(root, camera, content.userData.hitRoot, e.clientX, e.clientY) ||
-      hitTest(root, camera, content, e.clientX, e.clientY);
-    if (!hitOk) return;
-    active = true;
-    lastY = e.clientY;
-    lastX = e.clientX;
-    if (unlock) unlock();
-    else if (video && video.paused) {
-      video.play().then(function () { video.pause(); }).catch(function () {});
-    }
-    if (e.cancelable) e.preventDefault();
+    downHit = isHit(e);
+    downX = e.clientX;
+    downY = e.clientY;
+    downT = performance.now();
   }
 
-  function onMove(e) {
-    if (!active || !content.visible) return;
-    const dy = lastY - e.clientY; // drag up = forward
-    const dx = e.clientX - lastX;
-    const primary = Math.abs(dy) >= Math.abs(dx) * 0.6 ? dy : dx;
-    if (Math.abs(primary) > 0.5 && scrub) {
-      scrub(primary / SCRUB_PX);
-      lastY = e.clientY;
-      lastX = e.clientX;
-    }
-    if (e.cancelable) e.preventDefault();
+  // Tap (short, nearly stationary, started on the video) toggles play/pause.
+  // The tap is itself the user gesture that mobile browsers require for play().
+  function onUp(e) {
+    if (!downHit || !content.visible) return;
+    downHit = false;
+    if (content.userData.gestureConsumed) return; // pinch / long-press, not a tap
+    const moved = Math.hypot(e.clientX - downX, e.clientY - downY);
+    if (moved > TAP_MAX_PX || performance.now() - downT > TAP_MAX_MS) return;
+    if (content.userData.toggle) content.userData.toggle();
   }
 
-  function onUp() {
-    active = false;
+  function onCancel() {
+    downHit = false;
   }
 
-  function onWheel(e) {
-    if (!content.visible) return;
-    const hitOk =
-      hitTest(root, camera, content.userData.hitRoot, e.clientX, e.clientY) ||
-      hitTest(root, camera, content, e.clientX, e.clientY);
-    if (!hitOk) return;
-    e.preventDefault();
-    if (unlock) unlock();
-    if (scrub) scrub((-e.deltaY) / 700);
-  }
-
-  const opts = { passive: false };
-  root.addEventListener('pointerdown', onDown, opts);
-  window.addEventListener('pointermove', onMove, opts);
+  root.addEventListener('pointerdown', onDown);
   window.addEventListener('pointerup', onUp);
-  window.addEventListener('pointercancel', onUp);
-  root.addEventListener('wheel', onWheel, opts);
-  root.style.touchAction = 'none';
-  log.info('UI', 'Video scroll-scrub ready');
+  window.addEventListener('pointercancel', onCancel);
+  log.info('UI', 'Video tap-to-play/pause ready');
   return function () {
-    root.removeEventListener('pointerdown', onDown, opts);
-    window.removeEventListener('pointermove', onMove, opts);
+    root.removeEventListener('pointerdown', onDown);
     window.removeEventListener('pointerup', onUp);
-    window.removeEventListener('pointercancel', onUp);
-    root.removeEventListener('wheel', onWheel, opts);
-    root.style.touchAction = '';
+    window.removeEventListener('pointercancel', onCancel);
     try {
       if (video) {
         video.pause();
@@ -1276,6 +1409,33 @@ function hitTest(root, camera, obj, x, y) {
   const raycaster = new THREE.Raycaster();
   raycaster.setFromCamera(ndc, camera);
   return raycaster.intersectObject(obj, true).length > 0;
+}
+
+// Scratch objects reused by screenDeltaToWorld (avoids per-frame allocation
+// during two-finger pan gestures).
+const _panCamRight = new THREE.Vector3();
+const _panCamUp = new THREE.Vector3();
+const _panCamFwd = new THREE.Vector3();
+const _panCamPos = new THREE.Vector3();
+const _panDelta = new THREE.Vector3();
+
+/**
+ * Convert a screen-pixel drag delta into a world-space translation, so a
+ * two-finger pan moves the object the same way regardless of how far it is
+ * from the camera or which way the camera is currently facing. Returns a
+ * reused scratch Vector3 — callers must copy/add it immediately, not store
+ * the reference.
+ */
+function screenDeltaToWorld(root, camera, atPosition, dxPx, dyPx) {
+  const rect = root.getBoundingClientRect();
+  const h = rect.height || 1;
+  camera.getWorldPosition(_panCamPos);
+  const dist = Math.max(_panCamPos.distanceTo(atPosition), 0.01);
+  const worldPerPx = (2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / h;
+  camera.matrixWorld.extractBasis(_panCamRight, _panCamUp, _panCamFwd);
+  _panDelta.copy(_panCamRight).multiplyScalar(dxPx * worldPerPx);
+  _panDelta.addScaledVector(_panCamUp, -dyPx * worldPerPx); // screen +y is down
+  return _panDelta;
 }
 
 /**
@@ -1339,9 +1499,21 @@ function setupCubeInteraction(root, camera, content, opts) {
   let pinchStartDist = 0;
   let pinchStartScale = 1;
   let userScale = 1;
+  // Two-finger pan: midpoint of the two touches, tracked frame-to-frame so
+  // we can move the object by the midpoint's delta while pinch-zoom (based
+  // on the distance between the touches) happens at the same time.
+  let panMidX = 0;
+  let panMidY = 0;
 
   if (pivot) pivot.scale.setScalar(1);
   content.userData.userScale = 1;
+  if (!content.userData.panOffset) content.userData.panOffset = new THREE.Vector3();
+
+  function applyPan(dxPx, dyPx) {
+    const delta = screenDeltaToWorld(root, camera, content.position, dxPx, dyPx);
+    content.userData.panOffset.add(delta);
+    if (isPinned()) content.position.add(delta);
+  }
 
   function clearHold() {
     if (holdTimer) {
@@ -1401,7 +1573,7 @@ function setupCubeInteraction(root, camera, content, opts) {
   function onDown(e) {
     if (!content.visible) return;
     if (Date.now() < ignoreGesturesUntil) return;
-    if (e.target && e.target.closest && e.target.closest('.ar-overlay, #unpin-btn, #website-btn, #contact-btn')) return;
+    if (e.target && e.target.closest && e.target.closest('.ar-overlay, #unpin-btn, #pin-dot, #website-btn, #contact-btn')) return;
 
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -1418,6 +1590,8 @@ function setupCubeInteraction(root, camera, content, opts) {
         pinching = true;
         pinchStartDist = pointerDist(pts.a, pts.b) || 1;
         pinchStartScale = userScale;
+        panMidX = (pts.a.x + pts.b.x) / 2;
+        panMidY = (pts.a.y + pts.b.y) / 2;
       }
       if (e.cancelable) e.preventDefault();
       return;
@@ -1466,7 +1640,7 @@ function setupCubeInteraction(root, camera, content, opts) {
         tapCandidate = false;
         lastTapTs = 0;
         setPinned(true);
-        setHint('Pinned. Double-tap screen twice, or tap Unpin.');
+        setPinnedHint('Pinned. Double-tap screen twice, or tap Unpin.');
       }, LONG_MS);
     }
 
@@ -1481,7 +1655,7 @@ function setupCubeInteraction(root, camera, content, opts) {
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
 
-    // Pinch zoom
+    // Pinch zoom + two-finger pan (midpoint tracking)
     if (enableZoom && pinching && pointers.size >= 2) {
       tapCandidate = false;
       lastTapTs = 0;
@@ -1489,6 +1663,11 @@ function setupCubeInteraction(root, camera, content, opts) {
       if (pts && pinchStartDist > 0) {
         const d = pointerDist(pts.a, pts.b);
         applyZoom(pinchStartScale * (d / pinchStartDist));
+        const midX = (pts.a.x + pts.b.x) / 2;
+        const midY = (pts.a.y + pts.b.y) / 2;
+        applyPan(midX - panMidX, midY - panMidY);
+        panMidX = midX;
+        panMidY = midY;
       }
       if (e.cancelable) e.preventDefault();
       return;
@@ -1570,6 +1749,15 @@ function setupCubeInteraction(root, camera, content, opts) {
   window.addEventListener('pointercancel', onUp, optsCap);
   root.addEventListener('wheel', onWheel, optsEv);
   root.style.touchAction = 'none';
+  // Restore the model to how it looked the first time the marker was found:
+  // default zoom, no drag-rotation. Called when the marker is re-acquired
+  // after being lost while unpinned.
+  content.userData.resetToInitial = function () {
+    applyZoom(1);
+    if (pivot) pivot.rotation.set(0, 0, 0);
+    if (content.userData.panOffset) content.userData.panOffset.set(0, 0, 0);
+  };
+
   log.info('UI', 'Drag/zoom' + (enablePin ? '+pin' : '') + ' ready');
   return function () {
     clearHold();
@@ -1580,6 +1768,199 @@ function setupCubeInteraction(root, camera, content, opts) {
     window.removeEventListener('pointercancel', onUp, optsCap);
     root.removeEventListener('wheel', onWheel, optsEv);
     root.style.touchAction = '';
+  };
+}
+
+/**
+ * Pinch-zoom, two-finger move, long-press pin and double-tap unpin for flat
+ * image / video planes (same model as the 3-D object gestures).
+ * Runs alongside the gallery swipe / video tap handlers; it sets
+ * content.userData.gestureConsumed so they ignore pinch / long-press gestures.
+ * Zoom is stored in content.userData.userScale (applied in the render loop).
+ */
+function setupPlaneGestures(root, camera, content, opts) {
+  opts = opts || {};
+  const onPinChange = typeof opts.onPinChange === 'function' ? opts.onPinChange : null;
+  const LONG_MS = 600;
+  const MOVE_CANCEL = 14;
+  const DBL_TAP_MS = 700;
+  const ZOOM_MIN = 0.4;
+  const ZOOM_MAX = 3;
+
+  const pointers = new Map();
+  let pinching = false;
+  let pinchStartDist = 0;
+  let pinchStartScale = 1;
+  let userScale = 1;
+  let panMidX = 0;
+  let panMidY = 0;
+  let holdTimer = null;
+  let downX = 0;
+  let downY = 0;
+  let lastTapTs = 0;
+  let lastTapX = 0;
+  let lastTapY = 0;
+  let ignoreUntil = 0;
+
+  content.userData.userScale = 1;
+  content.userData.gestureConsumed = false;
+  if (!content.userData.panOffset) content.userData.panOffset = new THREE.Vector3();
+
+  function isPinned() {
+    return !!content.userData.pinned;
+  }
+  function setPinned(next) {
+    content.userData.pinned = !!next;
+    if (onPinChange) onPinChange(content.userData.pinned);
+  }
+  function clearHold() {
+    if (holdTimer) {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+    }
+  }
+  function applyZoom(scale) {
+    userScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, scale));
+    content.userData.userScale = userScale;
+  }
+  function applyPan(dxPx, dyPx) {
+    const delta = screenDeltaToWorld(root, camera, content.position, dxPx, dyPx);
+    content.userData.panOffset.add(delta);
+    if (isPinned()) content.position.add(delta);
+  }
+  function pts() {
+    if (pointers.size < 2) return null;
+    const arr = Array.from(pointers.values());
+    return { a: arr[0], b: arr[1] };
+  }
+  function dist(p) {
+    return Math.hypot(p.a.x - p.b.x, p.a.y - p.b.y);
+  }
+  function isHit(x, y) {
+    return (
+      hitTest(root, camera, content.userData.hitRoot, x, y) ||
+      hitTest(root, camera, content, x, y)
+    );
+  }
+
+  function tryDoubleTapUnpin(x, y) {
+    const now = Date.now();
+    const near = !lastTapTs || (Math.abs(x - lastTapX) < 120 && Math.abs(y - lastTapY) < 120);
+    if (lastTapTs && near && now - lastTapTs < DBL_TAP_MS) {
+      lastTapTs = 0;
+      ignoreUntil = now + 350;
+      if (typeof activeUnpinFn === 'function') activeUnpinFn('double-tap');
+      else setPinned(false);
+      return true;
+    }
+    lastTapTs = now;
+    lastTapX = x;
+    lastTapY = y;
+    setHint('Tap again quickly to unpin (or use Unpin button).');
+    return false;
+  }
+
+  function onDown(e) {
+    if (!content.visible) return;
+    if (Date.now() < ignoreUntil) return;
+    if (e.target && e.target.closest && e.target.closest('.ar-overlay, #unpin-btn, #pin-dot, #website-btn, #contact-btn, #audio-btn')) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointers.size === 1) content.userData.gestureConsumed = false;
+
+    if (pointers.size >= 2) {
+      clearHold();
+      lastTapTs = 0;
+      content.userData.gestureConsumed = true;
+      const p = pts();
+      pinching = true;
+      pinchStartDist = dist(p) || 1;
+      pinchStartScale = userScale;
+      panMidX = (p.a.x + p.b.x) / 2;
+      panMidY = (p.a.y + p.b.y) / 2;
+      if (e.cancelable) e.preventDefault();
+      return;
+    }
+
+    downX = e.clientX;
+    downY = e.clientY;
+    if (isPinned()) {
+      if (tryDoubleTapUnpin(e.clientX, e.clientY)) content.userData.gestureConsumed = true;
+      return;
+    }
+    if (isHit(e.clientX, e.clientY)) {
+      clearHold();
+      holdTimer = setTimeout(function () {
+        holdTimer = null;
+        if (pinching || pointers.size !== 1) return;
+        content.userData.gestureConsumed = true;
+        lastTapTs = 0;
+        setPinned(true);
+        setPinnedHint('Pinned. Pinch = zoom · two-finger drag = move · Unpin / double-tap to release.');
+      }, LONG_MS);
+    }
+  }
+
+  function onMove(e) {
+    if (!content.visible) return;
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pinching && pointers.size >= 2) {
+      const p = pts();
+      if (p && pinchStartDist > 0) {
+        applyZoom(pinchStartScale * (dist(p) / pinchStartDist));
+        const midX = (p.a.x + p.b.x) / 2;
+        const midY = (p.a.y + p.b.y) / 2;
+        applyPan(midX - panMidX, midY - panMidY);
+        panMidX = midX;
+        panMidY = midY;
+      }
+      if (e.cancelable) e.preventDefault();
+      return;
+    }
+    if (holdTimer && Math.hypot(e.clientX - downX, e.clientY - downY) > MOVE_CANCEL) clearHold();
+  }
+
+  function onUp(e) {
+    if (e && e.pointerId != null) pointers.delete(e.pointerId);
+    if (pointers.size < 2) {
+      pinching = false;
+      pinchStartDist = 0;
+    }
+    if (pointers.size === 0) clearHold();
+  }
+
+  // Desktop: trackpad pinch (ctrl + wheel) zooms
+  function onWheel(e) {
+    if (!content.visible || !e.ctrlKey) return;
+    if (!isHit(e.clientX, e.clientY)) return;
+    e.preventDefault();
+    applyZoom(userScale * Math.exp(-e.deltaY * 0.01));
+  }
+
+  // Marker re-acquired after being lost (unpinned): back to default size/position
+  content.userData.resetToInitial = function () {
+    applyZoom(1);
+    content.userData.panOffset.set(0, 0, 0);
+  };
+
+  const optsEv = { passive: false };
+  const optsCap = { passive: false, capture: true };
+  root.addEventListener('pointerdown', onDown, optsCap);
+  window.addEventListener('pointermove', onMove, optsEv);
+  window.addEventListener('pointerup', onUp, optsCap);
+  window.addEventListener('pointercancel', onUp, optsCap);
+  root.addEventListener('wheel', onWheel, optsEv);
+  root.style.touchAction = 'none';
+  log.info('UI', 'Plane pinch-zoom + pin ready');
+  return function () {
+    clearHold();
+    pointers.clear();
+    root.removeEventListener('pointerdown', onDown, optsCap);
+    window.removeEventListener('pointermove', onMove, optsEv);
+    window.removeEventListener('pointerup', onUp, optsCap);
+    window.removeEventListener('pointercancel', onUp, optsCap);
+    root.removeEventListener('wheel', onWheel, optsEv);
   };
 }
 
@@ -1609,6 +1990,7 @@ function setupGalleryInteraction(root, camera, content) {
   function onUp() {
     if (!active) return;
     active = false;
+    if (content.userData.gestureConsumed) return; // pinch / long-press, not a swipe
     // Let current crossfade finish — avoids choppy stacked transitions
     if (gallery.isAnimating && gallery.isAnimating()) return;
     const dx = lx - sx;
@@ -1623,6 +2005,7 @@ function setupGalleryInteraction(root, camera, content) {
   }
   function onWheel(e) {
     if (!content.visible) return;
+    if (e.ctrlKey) return; // trackpad pinch → zoom (handled by plane gestures)
     if (!hitTest(root, camera, content.userData.hitRoot, e.clientX, e.clientY)) return;
     e.preventDefault();
     if (gallery.isAnimating && gallery.isAnimating()) return;
@@ -1722,21 +2105,20 @@ export async function startWebAR(markerId) {
 
   let content;
   if (target.type === 'gallery') {
-    content = await buildGalleryContent(target.images || []);
+    content = await buildGalleryContent(target.images || [], {
+      autoplaySec: target.autoplaySec || 0,
+    });
+  } else if (target.type === 'video') {
+    content = await buildVideoContent({
+      videoUrl: target.videoUrl,
+      planeWidth: target.planeWidth,
+      chromaKey: target.chromaKey,
+    });
   } else if (target.type === 'model') {
     content = await buildModelContent({
       modelUrl: target.modelUrl,
       fitSize: target.fitSize,
       scrollAnim: !!target.scrollAnim,
-    });
-  } else if (target.type === 'video') {
-    content = await buildVideoContent({
-      videoUrl: target.videoUrl,
-      keyColor: target.keyColor,
-      keyDark: target.keyDark,
-      similarity: target.similarity,
-      smoothness: target.smoothness,
-      planeWidth: target.planeWidth,
     });
   } else {
     content = buildCubeContent();
@@ -1750,15 +2132,45 @@ export async function startWebAR(markerId) {
   const anchor = mindarThree.addAnchor(0);
   let tracking = false;
   let poseSnapped = false;
+  // Set when the marker is lost while NOT pinned. On re-acquisition this
+  // triggers a reset of zoom/rotation/scroll-scrub back to the initial state,
+  // instead of resuming wherever the user left it before walking away.
+  let pendingReset = false;
   const smoothPos = new THREE.Vector3();
   const smoothQuat = new THREE.Quaternion();
   const smoothScale = new THREE.Vector3(1, 1, 1);
   const targetPos = new THREE.Vector3();
   const targetQuat = new THREE.Quaternion();
   const targetScale = new THREE.Vector3();
+  const _camPosSnap = new THREE.Vector3(); // scratch vector for fixed-scale computation
+  // Fraction of screen height the model should fill at its default size.
+  // Constant regardless of physical marker size or camera distance.
+  const TARGET_SCREEN_FRAC = 0.60;
+  // Gallery/image frame: max fraction of viewport width / height it may fill.
+  const GALLERY_SCREEN_FRAC_W = 0.55;
+  const GALLERY_SCREEN_FRAC_H = 0.32;
   // Extra soft-follow on top of MindAR filter (lower = calmer, more lag).
   // Models get heavier damping — marker tracking noise shows more on 3D.
-  const POSE_SMOOTH_HZ = (target.type === 'gallery' || target.type === 'video') ? 6 : 4;
+  const POSE_SMOOTH_HZ = target.type === 'gallery' ? 6 : 2;
+  // Dead-zone: ignore tracker micro-jitter smaller than this world-space distance.
+  // Prevents the object from drifting up/down during idle holds.
+  const POS_DEADZONE = 0.012;
+  // Rotation dead-zone (radians). Angular tracker noise is amplified by the
+  // model's radius, so at high zoom the same sub-degree wobble swings the watch
+  // across a visibly large arc. Both dead-zones are scaled by the user's zoom.
+  // Rotation uses a wake/sleep pair rather than a single threshold: with one
+  // threshold the slerp re-arms as soon as noise nudges past it, so the model
+  // keeps creeping. It now only starts following past ROT_WAKE and re-freezes
+  // once the tracker settles back under ROT_SLEEP.
+  const ROT_WAKE = 0.030;  // ~1.7° — deliberate rotation needed to unfreeze
+  const ROT_SLEEP = 0.012; // ~0.7° — settle below this to re-freeze
+  let rotFollowing = false;
+
+  // Current pinch-zoom factor (1 = default size), maintained by the gesture code.
+  function currentUserScale() {
+    const s = content.userData.userScale;
+    return (typeof s === 'number' && isFinite(s) && s > 0) ? s : 1;
+  }
 
   function isPinned() {
     return !!content.userData.pinned;
@@ -1769,12 +2181,18 @@ export async function startWebAR(markerId) {
     setUnpinButtonVisible(pinned);
     if (pinned) {
       setChip('xr-chip', 'pinned');
-      setHint('Pinned. Scroll = anim · side-drag = rotate · Unpin / double-tap to release.');
+      // Instructions stay hidden behind the dot; tap it to reveal them.
+      setPinnedHint(
+        content.userData.mode === 'video' || content.userData.mode === 'gallery'
+          ? 'Pinned. Pinch = zoom · two-finger drag = move · Unpin / double-tap to release.'
+          : 'Pinned. Scroll = anim · side-drag = rotate · Unpin / double-tap to release.'
+      );
       log.ok('UI', 'Object PINNED' + (source ? ' via ' + source : ''));
     } else if (tracking) {
       content.visible = true;
       poseSnapped = false; // re-snap to marker next frame
       setChip('xr-chip', 'tracker: FOUND');
+      clearPinnedHint();
       if (content.userData.scrollAnim) {
         setHint('Unpinned. Scroll = anim · side-drag = rotate · Long-press = pin');
       } else if (content.userData.mode === 'model') {
@@ -1786,6 +2204,7 @@ export async function startWebAR(markerId) {
     } else {
       content.visible = false;
       setChip('xr-chip', 'tracker: searching...');
+      clearPinnedHint();
       setHint('Unpinned. Point camera at the marker to place again.');
       log.ok('UI', 'Object UNPINNED' + (source ? ' via ' + source : ''));
     }
@@ -1825,16 +2244,30 @@ export async function startWebAR(markerId) {
     unpinBtnEl.addEventListener('click', onUnpinDom, true);
   }
 
+  // Tap the blinking info dot to toggle the pinned instruction bubble.
+  const pinDotEl = document.getElementById('pin-dot');
+  function onPinDotDom(e) {
+    if (e) {
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
+    }
+    togglePinnedHint();
+  }
+  if (pinDotEl) {
+    pinDotEl.addEventListener('pointerdown', onPinDotDom, true);
+    pinDotEl.addEventListener('click', onPinDotDom, true);
+  }
+
   function onPinChange(pinned) {
     // Gesture path already set content.userData.pinned via setPinned()
     applyPinUi(pinned, pinned ? 'long-press' : 'gesture');
   }
 
   let disposeInteraction = function () {};
-  if (content.userData.mode === 'gallery') {
-    disposeInteraction = setupGalleryInteraction(root, camera, content);
-  } else if (content.userData.mode === 'video') {
+  if (content.userData.mode === 'video') {
     disposeInteraction = setupVideoInteraction(root, camera, content);
+  } else if (content.userData.mode === 'gallery') {
+    disposeInteraction = setupGalleryInteraction(root, camera, content);
   } else if (content.userData.mode === 'model' && content.userData.scrollAnim) {
     disposeInteraction = setupModelScrollAnimInteraction(root, camera, content, {
       enablePin: true,
@@ -1847,6 +2280,48 @@ export async function startWebAR(markerId) {
       onPinChange: onPinChange,
       fitSize: target.fitSize || 0.6,
     });
+  }
+
+  // Image / video planes: pinch-zoom, two-finger move, long-press pin
+  const isPlane = content.userData.mode === 'video' || content.userData.mode === 'gallery';
+  if (isPlane) {
+    const baseDispose = disposeInteraction;
+    const disposeGestures = setupPlaneGestures(root, camera, content, { onPinChange: onPinChange });
+    disposeInteraction = function () {
+      baseDispose();
+      disposeGestures();
+    };
+  }
+
+  // Video: sound on/off button (tap = user gesture, so unmuted playback is allowed)
+  let audioBtn = null;
+  function onAudioClick(e) {
+    if (e) {
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
+    }
+    if (content.userData.toggleAudio) content.userData.toggleAudio();
+  }
+  function stopAudioPointer(e) { e.stopPropagation(); }
+  function setAudioBtnVisible(show) {
+    if (audioBtn) audioBtn.classList.toggle('hidden', !show);
+  }
+  if (content.userData.mode === 'video') {
+    audioBtn = document.createElement('button');
+    audioBtn.id = 'audio-btn';
+    audioBtn.type = 'button';
+    audioBtn.className = 'audio-fab hidden';
+    const renderAudioBtn = function () {
+      const on = content.userData.isAudioOn();
+      audioBtn.textContent = on ? '🔊 Sound on' : '🔇 Tap for sound';
+      audioBtn.setAttribute('aria-label', on ? 'Mute video' : 'Unmute video');
+    };
+    content.userData.onAudioChange = renderAudioBtn;
+    renderAudioBtn();
+    audioBtn.addEventListener('pointerdown', stopAudioPointer);
+    audioBtn.addEventListener('click', onAudioClick);
+    const viewAr = document.getElementById('view-ar');
+    (viewAr || document.body).appendChild(audioBtn);
   }
 
   // ---- Watch model cache: preload all GLBs so swaps are instant ----
@@ -1903,6 +2378,9 @@ export async function startWebAR(markerId) {
     const frozenPos   = content.position.clone();
     const frozenQuat  = content.quaternion.clone();
     const frozenScale = content.scale.clone();
+    // Preserve the user's two-finger pan offset so it isn't reset by the
+    // marker-follow branch overwriting position with smoothPos + panOffset
+    const oldPanOffset = content.userData.panOffset ? content.userData.panOffset.clone() : null;
 
     // ── Teardown outgoing model ───────────────────────────────────────────────
     try { disposeInteraction(); } catch (e) {}
@@ -1924,6 +2402,7 @@ export async function startWebAR(markerId) {
     }
 
     newContent.userData.currentModelUrl = modelUrl;
+    newContent.userData.panOffset = oldPanOffset || new THREE.Vector3();
 
     // ── Restore world-space pose ──────────────────────────────────────────────
     newContent.position.copy(frozenPos);
@@ -1985,23 +2464,31 @@ export async function startWebAR(markerId) {
     tracking = true;
     poseSnapped = false;
     content.visible = true;
+    // Marker was lost (unpinned) and is now reacquired — start over instead of
+    // resuming the zoom/rotation/scroll position left before it walked away.
+    if (pendingReset) {
+      pendingReset = false;
+      if (typeof content.userData.resetToInitial === 'function') {
+        content.userData.resetToInitial();
+        log.info('UI', 'Marker re-acquired — reset to initial state');
+      }
+    }
     if (isPinned()) {
       content.userData.pinned = false;
       setUnpinButtonVisible(false);
       log.info('UI', 'Marker found — pin cleared, following again');
     }
     log.ok('MindAR', 'FOUND', { id: id, type: target.type });
-    if (target.type === 'gallery') {
-      setHint('Swipe or scroll on the photo to change images.');
+    if (target.type === 'video') {
+      setHint('Tap = play/pause · Pinch = zoom · Long-press = pin · 🔊 button for sound.');
+      setAudioBtnVisible(true);
+      if (content.userData.play) content.userData.play(); // muted autoplay
+    } else if (target.type === 'gallery') {
+      setHint('Swipe = change photo · Pinch = zoom · Long-press = pin.');
     } else if (target.type === 'model' && target.scrollAnim) {
       setHint('Scroll/drag up-down = play anim · side-drag = rotate · Long-press = pin');
     } else if (target.type === 'model') {
       setHint('Drag = rotate · Pinch = zoom · Long-press = pin');
-    } else if (target.type === 'video') {
-      setHint('Scroll / drag on the video to scrub playback. BG is keyed out.');
-      if (content.userData.unlockVideo) {
-        content.userData.unlockVideo().catch(function () {});
-      }
     } else {
       setHint('Drag = rotate · Pinch/wheel = zoom');
     }
@@ -2015,12 +2502,15 @@ export async function startWebAR(markerId) {
     if (isPinned()) {
       content.visible = true;
       log.ok('MindAR', 'LOST but PINNED — object retained');
-      setHint('Pinned (no marker). Tap Unpin or double-tap to release.');
+      setPinnedHint('Pinned (no marker). Tap Unpin or double-tap to release. Use two fingers to drag the object.');
       setChip('xr-chip', 'pinned (no marker)');
       return;
     }
 
     content.visible = false;
+    setAudioBtnVisible(false);
+    if (content.userData.pause) content.userData.pause(); // video: pause while marker is gone
+    pendingReset = true; // reset zoom/rotation/scrub when the marker comes back
     log.warn('MindAR', 'LOST');
     setHint('Marker lost. Point camera at the target image.');
     setChip('xr-chip', 'tracker: searching...');
@@ -2056,18 +2546,90 @@ export async function startWebAR(markerId) {
       if (!poseSnapped) {
         smoothPos.copy(targetPos);
         smoothQuat.copy(targetQuat);
-        smoothScale.copy(targetScale);
+        // Compute a fixed scale so the model always appears the same size on screen,
+        // irrespective of the physical marker size or camera distance.
+        // Formula: scale = TARGET_SCREEN_FRAC * screenHeight / localModelHeight
+        //   screenHeight (world units) = 2 * dist * tan(fov/2)
+        //   localModelHeight ≈ fitSize (model is normalised to fitSize inside buildModelContent)
+        camera.getWorldPosition(_camPosSnap);
+        const snapDist = Math.max(_camPosSnap.distanceTo(targetPos), 0.01);
+        const screenH  = 2 * snapDist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+        let fixedS;
+        if ((content.userData.mode === 'gallery' || content.userData.mode === 'video') && content.userData.bounds) {
+          // Fit the whole photo frame inside the viewport (portrait phones are
+          // narrower than tall, so height-only sizing overflowed the sides).
+          const b = content.userData.bounds;
+          const screenW = screenH * (camera.aspect || 1);
+          fixedS = Math.min(
+            GALLERY_SCREEN_FRAC_W * screenW / b.w,
+            GALLERY_SCREEN_FRAC_H * screenH / b.h
+          );
+        } else {
+          const localH = target.fitSize || 1.05;
+          fixedS = TARGET_SCREEN_FRAC * screenH / localH;
+        }
+        smoothScale.setScalar(fixedS);
         poseSnapped = true;
+        rotFollowing = false; // start frozen — unfreeze only on deliberate rotation
       } else {
         // Frame-rate independent damping: alpha = 1 - exp(-hz * dt)
         const alpha = 1 - Math.exp(-POSE_SMOOTH_HZ * Math.min(Math.max(dt, 0), 0.05));
-        smoothPos.lerp(targetPos, alpha);
-        smoothQuat.slerp(targetQuat, alpha);
-        smoothScale.lerp(targetScale, alpha);
+        // Zoom amplifies tracker noise: a fixed world-space wobble covers Nx more
+        // screen pixels when the model is scaled up Nx, and angular noise swings
+        // the model through an arc proportional to its radius. Widen both
+        // dead-zones with the zoom factor so a zoomed-in model stays as steady as
+        // it looks at default size.
+        const zoom = currentUserScale();
+        // Marker pose noise also grows with how far the marker is from the
+        // camera: a farther/smaller marker gives the tracker fewer pixels to
+        // resolve, so its raw position/rotation estimate is noisier — this is
+        // independent of pinch-zoom and shows up right on first scan if the
+        // marker is held farther back ("in the background"). Compare the
+        // camera's current distance to the marker against the comfortable
+        // reference distance implied by TARGET_SCREEN_FRAC (the distance at
+        // which the model would naturally fill that screen fraction), and
+        // widen both dead-zones proportionally once the marker sits farther
+        // than that reference.
+        camera.getWorldPosition(_camPosSnap);
+        const currentDist = Math.max(_camPosSnap.distanceTo(targetPos), 0.01);
+        const localHNow = target.fitSize || 1.05;
+        const nominalDist = localHNow / (TARGET_SCREEN_FRAC * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+        const distFactor = Math.max(1, currentDist / Math.max(nominalDist, 0.01));
+        // Dead-zone: only lerp position if the tracker moved more than the
+        // threshold. Suppresses the small drift from tracker noise during idle
+        // holds without making intentional movement feel sluggish.
+        if (smoothPos.distanceTo(targetPos) > POS_DEADZONE * zoom * distFactor) {
+          smoothPos.lerp(targetPos, alpha);
+        }
+        // Rotation wake/sleep latch: sub-degree angular noise is levered out by
+        // the model radius and reads as a slow spin once zoomed in. Only follow
+        // after a deliberate turn, then re-freeze once the tracker settles.
+        const rotDelta = smoothQuat.angleTo(targetQuat);
+        if (rotFollowing) {
+          if (rotDelta < ROT_SLEEP * zoom * distFactor) rotFollowing = false;
+        } else if (rotDelta > ROT_WAKE * zoom * distFactor) {
+          rotFollowing = true;
+        }
+        if (rotFollowing) {
+          smoothQuat.slerp(targetQuat, alpha);
+        }
+        // Scale is intentionally NOT updated after first snap — keeps a constant
+        // default size regardless of how far away or how small the physical marker is.
       }
       content.position.copy(smoothPos);
-      content.quaternion.copy(smoothQuat);
+      if (content.userData.panOffset) content.position.add(content.userData.panOffset);
+      if (content.userData.mode === 'gallery' || content.userData.mode === 'video') {
+        // Billboard: ignore marker roll/pitch/yaw so the photo stays upright and
+        // faces the camera squarely (removes the tilt inherited from the marker).
+        camera.getWorldQuaternion(content.quaternion);
+      } else {
+        content.quaternion.copy(smoothQuat);
+      }
       content.scale.copy(smoothScale);
+    }
+    // Image/video planes: pinch-zoom multiplier (also applies while pinned)
+    if (isPlane && content.visible) {
+      content.scale.copy(smoothScale).multiplyScalar(currentUserScale());
     }
 
     // Auto-play mixers only (scroll-anim models are driven manually via scrub)
@@ -2099,7 +2661,18 @@ export async function startWebAR(markerId) {
           unpinBtnEl.removeEventListener('pointerdown', onUnpinDom, true);
           unpinBtnEl.removeEventListener('click', onUnpinDom, true);
         }
+        if (pinDotEl) {
+          pinDotEl.removeEventListener('pointerdown', onPinDotDom, true);
+          pinDotEl.removeEventListener('click', onPinDotDom, true);
+        }
         setUnpinButtonVisible(false);
+        clearPinnedHint();
+        if (audioBtn) {
+          audioBtn.removeEventListener('pointerdown', stopAudioPointer);
+          audioBtn.removeEventListener('click', onAudioClick);
+          audioBtn.remove();
+          audioBtn = null;
+        }
         if (content && content.userData && content.userData.video) {
           try {
             content.userData.video.pause();

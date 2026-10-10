@@ -85,10 +85,45 @@
     });
   });
 
+  // Asset type selection (Image / Video / 3-D object / Furniture)
+  var assetSelect = document.getElementById('asset-select');
+  var assetBtns = assetSelect ? assetSelect.querySelectorAll('.asset-btn') : [];
+
+  function showAssetSelect() {
+    if (assetSelect) assetSelect.classList.remove('hidden');
+  }
+
+  function hideAssetSelect() {
+    if (assetSelect) assetSelect.classList.add('hidden');
+  }
+
+  assetBtns.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var id = btn.getAttribute('data-asset');
+      log.info('UI', 'asset selected', id);
+      clearAssetError();
+      hideAssetSelect();
+      enterWebAR(id);
+    });
+  });
+
+  var assetError = document.getElementById('asset-error');
+
   function showBootError(msg) {
+    // The selection overlay covers the page, so show the error there too
+    if (assetError) {
+      assetError.style.display = 'block';
+      assetError.textContent = msg;
+    }
     if (!bootError) return;
     bootError.style.display = 'block';
     bootError.textContent = msg;
+  }
+
+  function clearAssetError() {
+    if (!assetError) return;
+    assetError.style.display = 'none';
+    assetError.textContent = '';
   }
 
   function setBusy(busy) {
@@ -99,6 +134,7 @@
     if (bocciaBtn) bocciaBtn.disabled = busy;
     if (bocciaLogoBtn) bocciaLogoBtn.disabled = busy;
     if (motionBtn) motionBtn.disabled = busy;
+    assetBtns.forEach(function (b) { b.disabled = busy; });
   }
 
   function showArView() {
@@ -116,7 +152,10 @@
   async function loadWebAR() {
     if (webarApi) return webarApi;
     log.info('App', 'Loading webar.js...');
-    webarApi = await import('./webar.js');
+    // Cache-bust the dynamic import so phones always fetch the latest module
+    // instead of a stale cached copy (dynamic import() URLs aren't covered
+    // by the static <script v=...> cache-busting on this page).
+    webarApi = await import('./webar.js?v=' + Date.now());
     log.ok('App', 'webar.js loaded');
     return webarApi;
   }
@@ -147,6 +186,7 @@
       var msg = err && err.message ? err.message : String(err);
       showBootError('WebAR failed: ' + msg);
       showScanView();
+      showAssetSelect();
     } finally {
       setBusy(false);
     }
@@ -165,6 +205,7 @@
       log.warn('App', 'stopWebAR error', String(e));
     }
     showScanView();
+    showAssetSelect();
   }
 
   function checkSecureContext() {
@@ -244,7 +285,13 @@
   log.ok('UI', 'Buttons ready (cube + gallery + seiko + boccia + logo + motion + unpin)');
 
   checkSecureContext();
-  // Temporary: skip home UI — open AR immediately for SHWAA logo → Boccia watch
-  var bootId = new URLSearchParams(location.search).get('markerId') || 'boccia-logo';
-  enterWebAR(bootId);
+  // Boot: show asset selection first; the loading spinner appears after a pick.
+  // ?markerId=... still bypasses the selection (deep links).
+  var deepLinkId = new URLSearchParams(location.search).get('markerId');
+  if (deepLinkId) {
+    hideAssetSelect();
+    enterWebAR(deepLinkId);
+  } else {
+    showAssetSelect();
+  }
 })();

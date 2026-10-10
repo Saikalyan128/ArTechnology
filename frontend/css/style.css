@@ -268,6 +268,78 @@ a.chip,
 }
 
 /* ---- AR loading overlay ---- */
+.asset-select {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+/* Brand header centred at the top (same style as .ar-brand-name on the AR page) */
+.asset-brand {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 16px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* Error from a failed AR start — visible on the selection screen */
+.asset-error {
+  display: none;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(239, 83, 80, 0.15);
+  color: #ef5350;
+  font-size: 0.85rem;
+  word-break: break-word;
+}
+
+.asset-select.hidden {
+  display: none;
+}
+
+.asset-select-inner {
+  width: min(90vw, 360px);
+  text-align: center;
+}
+
+.asset-select-inner h2 {
+  margin: 0 0 20px;
+  font-size: 1.2rem;
+  color: var(--text);
+}
+
+.asset-select-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.asset-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.asset-btn:active:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.asset-btn:disabled {
+  opacity: 0.5;
+}
+
 .ar-loading {
   position: fixed;
   inset: 0;
@@ -313,6 +385,33 @@ a.chip,
 }
 
 /* Floating Unpin — highest layer, large hit target, never under canvas */
+/* Video sound toggle (bottom-left, opposite the Unpin button) */
+.audio-fab {
+  appearance: none;
+  position: fixed;
+  left: 16px;
+  bottom: 88px;
+  z-index: 1000;
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  min-height: 48px;
+  padding: 12px 18px;
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: rgba(20, 20, 24, 0.8);
+  color: #fff;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+}
+
+.audio-fab.hidden {
+  display: none;
+}
+
 .unpin-fab,
 #unpin-btn {
   appearance: none;
@@ -361,16 +460,106 @@ a.chip,
   transition: bottom 0.2s ease;
 }
 
-/* Lift hint above watch picker when picker is visible */
-#view-ar.has-picker .hint,
-#view-ar.has-picker #hint {
-  bottom: 116px;
+/* Blinking info dot — shown instead of the hint text right after pinning;
+   tap it to show/hide the pinned instructions bubble above it. */
+.pin-dot {
+  appearance: none;
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 7;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 6px rgba(79, 195, 247, 0.25);
+  cursor: pointer;
+  animation: pin-dot-blink 1s ease-in-out infinite;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-/* Lift unpin button above watch picker */
+.pin-dot::before {
+  content: 'i';
+  font-family: Georgia, 'Times New Roman', serif;
+  font-style: italic;
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 1;
+  color: #0f1115;
+}
+
+@keyframes pin-dot-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+/* Instruction bubble anchored just above the info dot */
+.pin-tooltip {
+  position: fixed;
+  left: 50%;
+  bottom: 52px;
+  transform: translateX(-50%);
+  z-index: 6;
+  max-width: 85%;
+  text-align: center;
+  font-size: 0.85rem;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(15, 17, 21, 0.92);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
+/* Lift info dot above watch picker, same line/position as the hint */
+#view-ar.has-picker .pin-dot {
+  left: calc(50% + 64px);
+  transform: none;
+  bottom: 122px;
+}
+
+/* Lift instruction bubble above watch picker, right-aligned above the dot */
+#view-ar.has-picker .pin-tooltip {
+  left: calc(50% + 64px);
+  right: 16px;
+  transform: none;
+  text-align: right;
+  bottom: 154px;
+  max-width: none;
+}
+
+/* Lift hint above watch picker when picker is visible, right-aligned
+   on the same line as the (centered) Unpin button. The left edge is
+   anchored past the button's own footprint (~96px min-width, centered)
+   plus a gap, so long hint text can never overlap the Unpin button. */
+#view-ar.has-picker .hint,
+#view-ar.has-picker #hint {
+  left: calc(50% + 64px);
+  right: 16px;
+  bottom: 116px;
+  transform: none;
+  text-align: right;
+  max-width: none;
+}
+
+/* Lift unpin button above watch picker, centered on the same line as the hint */
 #view-ar.has-picker .unpin-fab,
 #view-ar.has-picker #unpin-btn {
-  bottom: 180px;
+  left: 50%;
+  right: auto;
+  bottom: 116px;
+  transform: translateX(-50%);
+}
+
+#view-ar.has-picker .unpin-fab:active,
+#view-ar.has-picker #unpin-btn:active {
+  transform: translateX(-50%) scale(0.96);
 }
 
 /* ---- Watch Picker ---- */
